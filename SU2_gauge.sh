@@ -26,7 +26,7 @@ mpiexec -np 4 python -u ./SU2_gauge.py \
     --beta ${b}  \
     --eps ${eps} \
     --init_tensor_chunk     "(216, 216, 1)"\
-    --reduced_matrix_chunk  "(8, 8, 4, 4)" \
+    --reduced_matrix_chunk  "(64, 64, 64, 1)" \
     --coarse_graining_chunk "(8, 8, 8)"    \
     --degeneracy_eps ${degeps} \
     --rgscheme ${rgscheme} \

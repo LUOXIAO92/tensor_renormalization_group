@@ -17,7 +17,7 @@ from tools.mpi_tools import contract_slice, gpu_syn
 
 
 
-def tranpose(T:Tensor, do_what:str, direction:str):
+def tranpose(where, T, do_what:str, direction:str, comm:MPI.Intercomm):
     """
     Parameters
     ----------
@@ -34,24 +34,19 @@ def tranpose(T:Tensor, do_what:str, direction:str):
     ----------
     """
 
-    ts = T.xp.transpose
-
-    comm = T.comm
-    if comm.Get_rank() == T.where:
+    if comm.Get_rank() == where:
         if do_what == "transpose":
             if direction == "Y" or direction == "y":
                 pass
             elif direction == "X" or direction == "x":
-                T.T = ts(T.T, axes=(2,3,0,1))
-                T.arrangement = 'yYxX'
+                T = T.transpose(axes=(2,3,0,1))
 
         elif do_what == "restore":
             if direction == "Y" or direction == "y":
                 pass
             elif direction == "X" or direction == "x":
-                T.T = ts(T.T, axes=(2,3,0,1))
-                T.arrangement = 'xXyY'
-    gpu_syn(T.usegpu)
+                T = T.transpose(axes=(2,3,0,1))
+
     comm.barrier()
     return T
 
@@ -69,16 +64,18 @@ def squeezer(where, T0, T1, T2, T3,
     """
     >>>     d        f                d                f
     >>>     |    j   |                |                |
-    >>> c---T1-------T2---e       c---T1---\       /---T2---e
-    >>>     |        |                |     \     /    |
-    >>>    i|        |k              i|    P1\---/P2   |k
-    >>>     |        |                |     /     \    |
-    >>> a---T0-------T3---g       a---T0---/       \---T3---g
+    >>> c---T1-------T2---e       c---T1---\\       /---T2---e
+    >>>     |        |                |     \\     /    |
+    >>>    i|        |k              i|    P1\\---/P2   |k
+    >>>     |        |                |     /     \\    |
+    >>> a---T0-------T3---g       a---T0---/       \\---T3---g
     >>>     |    l   |                |                |
     >>>     b        h                b                h 
-    returns left/down projector PLD and right/up projector PRU \\
-    PLD_{x,x0,x1} or PLD_{y,y0,y1} \\
-    PRU_{x'0,x'1,x'} or PRU_{y'0,y'1,y'}
+    
+    #returns left/down projector PLD and right/up projector PRU 
+    #PLD_{x,x0,x1} or PLD_{y,y0,y1} 
+    #PRU_{x'0,x'1,x'} or PRU_{y'0,y'1,y'}
+    
     """
     
     MPI_SIZE = comm.Get_size()
@@ -86,39 +83,56 @@ def squeezer(where, T0, T1, T2, T3,
 
     if MPI_RANK == where:
         assert (T0 is not None) and (T1 is not None) and (T2 is not None) and (T3 is not None), 'All Tensors must be kept on the same rank'
-
+    
     def cal_R(truncate_eps=0, qr='qr', return_eigval=False):
         if qr == 'qr':
-            contract_shape = T0.shape[0], T0.shape[1], T1.shape[0], T1.shape[3], T0.shape[3], T0.shape[3]
-            contract_chunk = chunk
-            contract_slices = contract_slice(shape=contract_shape, chunk=contract_chunk, comm=comm, gather_to_rank0=True)
-            M_shape = T0.shape[1], T1.shape[1], T0.shape[1], T1.shape[1]
-            #M = oe.contract("aibe,akbf,cjed,clfd->ijkl", xp.conj(T0), T0, xp.conj(T1), T1)
-            if MPI_RANK == 0:
-                operands = [[] for _ in range(MPI_SIZE)]
-                for n, legs in enumerate(contract_slices):
-                    a, b, c, d, e, f = legs
-                    if n % MPI_SIZE == MPI_RANK:
-                        operands[MPI_RANK].append([xp.conj(T0[a,:,b,e]), T0[a,:,b,f], xp.conj(T1[c,:,e,d]), T1[c,:,f,d]])
+            if MPI_RANK == where:
+                contract_shape = T0.shape[0], T0.shape[1], T1.shape[0], T1.shape[3], T0.shape[3], T0.shape[3]
+                M_shape        = T0.shape[1], T1.shape[1], T0.shape[1], T1.shape[1]
             else:
-                operands = None
-            operands = comm.scatter(sendobj=operands, root=0)
+                contract_shape = None
+                M_shape        = None
+            contract_shape = comm.bcast(obj=contract_shape, root=where)
+            M_shape        = comm.bcast(obj=M_shape       , root=where)
+            
+            contract_chunk = chunk[0], chunk[1], chunk[0], chunk[1], chunk[2], chunk[3]
+            contract_slices = contract_slice(shape=contract_shape, chunk=contract_chunk, comm=comm, gather_to_rank0=True)
+            
+            #M = oe.contract("aibe,akbf,cjed,clfd->ijkl", xp.conj(T0), T0, xp.conj(T1), T1)
+            #if MPI_RANK == where:
+            #    operands = [[] for _ in range(MPI_SIZE)]
+            #    for n, legs in enumerate(contract_slices):
+            #        a, b, c, d, e, f = legs
+            #        operands[n % MPI_SIZE].append([xp.conj(T0[a,:,b,e]), T0[a,:,b,f], xp.conj(T1[c,:,e,d]), T1[c,:,f,d]])
+            #else:
+            #    operands = None
+            #operands = comm.scatter(sendobj=operands, root=where)
+            
+            contract_iter = 
+            for n, legs in enumerate(contract_slices):
                 
         elif qr == 'rq':
-            contract_shape = T3.shape[1], T3.shape[2], T2.shape[1], T2.shape[3], T3.shape[3], T3.shape[3]
-            contract_chunk = chunk
+            if MPI_RANK == where:
+                contract_shape = T3.shape[1], T3.shape[2], T2.shape[1], T2.shape[3], T3.shape[3], T3.shape[3]
+                M_shape        = T3.shape[0], T2.shape[0], T3.shape[0], T2.shape[0]
+            else:
+                contract_shape = None
+                M_shape        = None
+            contract_shape = comm.bcast(obj=contract_shape, root=where)
+            M_shape        = comm.bcast(obj=M_shape       , root=where)
+
+            contract_chunk = chunk[0], chunk[1], chunk[0], chunk[1], chunk[2], chunk[3]
             contract_slices = contract_slice(shape=contract_shape, chunk=contract_chunk, comm=comm, gather_to_rank0=True)
-            M_shape = T3.shape[0], T2.shape[0], T3.shape[0], T2.shape[0]
+            
             #M = oe.contract("iabe,kabf,jced,lcfd->ijkl", T3, xp.conj(T3), T2, xp.conj(T2))
-            if MPI_RANK == 0:
+            if MPI_RANK == where:
                 operands = [[] for _ in range(MPI_SIZE)]
                 for n, legs in enumerate(contract_slices):
                     a, b, c, d, e, f = legs
-                    if n % MPI_SIZE == MPI_RANK:
-                        operands[MPI_RANK].append([T3[:,a,b,e], xp.conj(T3[:,a,b,f]), T2[:,c,e,d], xp.conj(T2[:,c,f,d])])
+                    operands[n % MPI_SIZE].append([T3[:,a,b,e], xp.conj(T3[:,a,b,f]), T2[:,c,e,d], xp.conj(T2[:,c,f,d])])
             else:
                 operands = None
-            operands = comm.scatter(sendobj=operands, root=0)
+            operands = comm.scatter(sendobj=operands, root=where)
 
         subscripts = {'qr' : 'aibe,akbf,cjed,clfd->ijkl',
                       'rq' : 'iabe,kabf,jced,lcfd->ijkl'}
@@ -344,17 +358,16 @@ def new_pure_tensor(info:Info,
     comm.barrier()
     if Ngilt == 1:
         if direction == 'y' or direction == 'Y':
-            T0, T1 = gilt_plaq(T.T, T.T, gilt_eps, direction, gilt_legs, T.usegpu)
+            T0, T1 = gilt_plaq(where, T.T, T.T, comm, gilt_eps, direction, gilt_legs, T.usegpu)
         elif direction == 'x' or direction == 'X':
             T0, T1 = T.T, T.T
     elif Ngilt == 2:
-        T0, T1 = gilt_plaq(T.T, T.T, gilt_eps, direction, gilt_legs, T.usegpu)
+        T0, T1 = gilt_plaq(where, T.T, T.T, comm, gilt_eps, direction, gilt_legs, T.usegpu)
     gpu_syn(T.usegpu)
     comm.barrier()
 
-    if MPI_RANK == where:
-        T0 = tranpose(T0, direction)
-        T1 = tranpose(T1, direction)
+    T0 = tranpose(where, T0, 'transpose', direction, comm)
+    T1 = tranpose(where, T1, 'transpose', direction, comm)
     gpu_syn(usegpu)
     comm.barrier()
 
@@ -378,8 +391,7 @@ def new_pure_tensor(info:Info,
 
     del PLD, PRU, T0, T1
 
-    if MPI_RANK == where:
-        T = tranpose(T, direction)
+    T.T = tranpose(where, T.T, "restore", direction, comm)
     gpu_syn(usegpu)
     comm.barrier()
     

@@ -64,7 +64,6 @@ class Tensor_HOTRG:
         self.nrgsteps  = 0
         self.factor    = {}
         self.ln_factor = {}
-        self.arrangement = None
 
         self.xp = np
         self.usegpu  = False
@@ -114,13 +113,10 @@ class Tensor_HOTRG:
 
         if self.dim   == 2:
             self.rgstep = {'X':0, 'Y':0}
-            self.arrangement = 'xXyY'
         elif self.dim == 3:
             self.rgstep = {'X':0, 'Y':0, 'T':0}
-            self.arrangement = 'xXyYtT'
         elif self.dim == 4:
             self.rgstep = {'X':0, 'Y':0, 'Z':0, 'T':0}
-            self.arrangement = 'xXyYzZtT'
         else:
             raise AssertionError('Only support 2,3,4 dimensional system.')
         
@@ -281,7 +277,7 @@ class HOTRG_2d:
     def pure_tensor_renormalization(self, Tpure:Tensor_HOTRG):
         from .HOTRG_2d_core import new_pure_tensor
 
-        def exec_rg(direction):
+        def exec_rg(Tpure:Tensor_HOTRG, direction):
             Tpure = new_pure_tensor(self.info, Tpure, direction)
 
             Tpure = Tpure.normalize()
@@ -298,16 +294,24 @@ class HOTRG_2d:
         Tpure = Tpure.normalize()
         nrgsteps = Tpure.nrgsteps
         Tpure.ln_factor[nrgsteps] = math.log(Tpure.factor[nrgsteps]) / 2**(nrgsteps)
+        lnZoV = self.cal_lnZoverV(Tpure)
 
-        print(type(Tpure))
-        sys.exit(0)
+        if self.rank == 0:
+            print(f"lnZ/V={lnZoV}")
 
         gpu_syn(Tpure.usegpu)
         self.comm.barrier()
         
         for direction in self.info.rgiter:
             Tpure.update_nrgsteps(direction)
-            Tpure = exec_rg(direction)
+            if self.rank == 0:
+                print(f"start {Tpure.nrgsteps}-th rgstep. Coarse graining direction is {direction}")
+            
+            Tpure = exec_rg(Tpure, direction)
+
+            lnZoV = self.cal_lnZoverV(Tpure)
+            if self.rank == 0:
+                print(f"{Tpure.nrgsteps}-th rgstep finished. lnZ/V={lnZoV}")
             
 
         return Tpure
