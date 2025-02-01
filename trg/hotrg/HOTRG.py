@@ -1,4 +1,5 @@
 import os
+import sys
 
 from mpi4py import MPI 
 from tools.mpi_tools import gpu_syn
@@ -20,7 +21,6 @@ class HOTRG_info:
                  gilt_eps:float, 
                  Ngilt:int, 
                  Ncutlegs:int,
-                 init_tensor_chunk:tuple, 
                  reduced_matrix_chunk:tuple, 
                  coarse_graining_chunk:tuple,
                  verbose:bool,
@@ -29,7 +29,6 @@ class HOTRG_info:
                  comm:MPI.Intercomm):
         
         #Chunking information
-        self.init_tensor_chunk     = init_tensor_chunk
         self.reduced_matrix_chunk  = reduced_matrix_chunk
         self.coarse_graining_chunk = coarse_graining_chunk
 
@@ -89,10 +88,8 @@ class Tensor_HOTRG:
         if self.comm.Get_rank() == root:
             self.where = root
             if type(T) == np.ndarray:
-                self.xp = np
                 self.usegpu = False
             elif type(T) == cp.ndarray:
-                self.xp = cp
                 self.usegpu = True
             else:
                 raise TypeError('Only support numpy.ndarray and cupy.ndarray')
@@ -109,7 +106,11 @@ class Tensor_HOTRG:
         self.size    = self.comm.bcast(obj=self.size   , root=root)
         self.where   = self.comm.bcast(obj=self.where  , root=root)
         self.backend = self.comm.bcast(obj=self.backend, root=root)
-        self.xp      = self.comm.bcast(obj=self.xp     , root=root)
+
+        if self.backend == np.ndarray:
+            self.xp = np
+        elif self.backend == cp.ndarray:
+            self.xp = cp
 
         if self.dim   == 2:
             self.rgstep = {'X':0, 'Y':0}
@@ -201,16 +202,18 @@ class Tensor_HOTRG:
             if device == 'cpu':
                 self.T = np.asarray(self.T)
                 self.backend = np.ndarray
-                self.xp = np
                 self.usegpu = False
             elif device == 'gpu':
                 self.T = cp.asarray(self.T)
                 self.backend = cp.ndarray
-                self.xp = cp
                 self.usegpu = True
 
         self.backend = self.comm.bcast(obj=self.backend, root=self.where)
-        self.xp      = self.comm.bcast(obj=self.xp     , root=self.where)
+
+        if self.backend == np.ndarray:
+            self.xp = np
+        elif self.backend == cp.ndarray:
+            self.xp = cp
 
         gpu_syn(self.usegpu)
         self.comm.Get_rank()
@@ -276,25 +279,28 @@ class HOTRG_2d:
         return lnZoV
 
     def pure_tensor_renormalization(self, Tpure:Tensor_HOTRG):
-        from HOTRG_2d_core import new_pure_tensor
+        from .HOTRG_2d_core import new_pure_tensor
 
         def exec_rg(direction):
-            Tpure = new_pure_tensor(self.info,
-                                    Tpure, 
-                                    direction)
+            Tpure = new_pure_tensor(self.info, Tpure, direction)
 
             Tpure = Tpure.normalize()
-            Tpure.ln_factor[Tpure.nrgsteps] = math.log(c) / 2**(Tpure.nrgsteps)
+            nrgsteps = Tpure.nrgsteps
+            Tpure.ln_factor[nrgsteps] = math.log(Tpure.factor[nrgsteps]) / 2**(nrgsteps)
             
-            gpu_syn(self.usegpu)
+            gpu_syn(Tpure.usegpu)
             self.comm.barrier()
 
-            return self.Tpure
+            return Tpure
+        
+        
 
-        rgstep = {'X' : 0, 'Y' : 0}
+        Tpure = Tpure.normalize()
+        nrgsteps = Tpure.nrgsteps
+        Tpure.ln_factor[nrgsteps] = math.log(Tpure.factor[nrgsteps]) / 2**(nrgsteps)
 
-        Tpure, c = Tpure.normalize()
-        Tpure.ln_factor[Tpure.nrgsteps] = math.log(c) / 2**(Tpure.nrgsteps)
+        print(type(Tpure))
+        sys.exit(0)
 
         gpu_syn(Tpure.usegpu)
         self.comm.barrier()

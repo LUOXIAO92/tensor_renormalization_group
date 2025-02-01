@@ -19,7 +19,7 @@ pars.add_argument('--gilt_eps', default=0, type=float)
 pars.add_argument('--Ngilt'   , default=1, type=int)
 pars.add_argument('--Ncutlegs', default=2, type=int)
 
-pars.add_argument('--reduced_mat_chunk'    , default=(4,4,4,4))
+pars.add_argument('--reduced_matrix_chunk' , default=(4,4,4,4))
 pars.add_argument('--coarse_graining_chunk', default=(1,1,1))
 
 pars.add_argument('--out_dir'     , default='./')
@@ -57,10 +57,10 @@ if __name__ == "__main__":
     rgscheme             = args.rgscheme
     degeneracy_eps       = args.degeneracy_eps
     truncate_eps         = args.truncate_eps
-    reduced_mat_chunk    = ast.literal_eval(args.reduced_mat_chunk)
+    reduced_matrix_chunk = ast.literal_eval(args.reduced_matrix_chunk)
     coarse_graining_chunk = ast.literal_eval(args.coarse_graining_chunk)
-    assert len(reduced_mat_chunk) == 4
-    assert len(reduced_mat_chunk) == 4
+    assert len(reduced_matrix_chunk) == 4
+    assert len(coarse_graining_chunk) == 3
 
     gilt_eps = args.gilt_eps
     Ngilt    = args.Ngilt
@@ -70,7 +70,7 @@ if __name__ == "__main__":
     verbose      = args.verbose
     save_details = args.save_details
 
-    from SU2_gauge_measurement import two_dims_su2puregauge_hotrg as SU2_2dHOTRG
+    from SU2_pure_gauge.SU2_gauge_measurement import two_dims_su2puregauge_hotrg as SU2_2dHOTRG
     from trg.hotrg.HOTRG import HOTRG_info
 
     info = HOTRG_info(Dcut           = Dcut, 
@@ -80,7 +80,7 @@ if __name__ == "__main__":
                       gilt_eps       = gilt_eps, 
                       Ngilt          = Ngilt, 
                       Ncutlegs       = Ncutlegs,
-                      reduced_mat_chunk     = reduced_mat_chunk,
+                      reduced_matrix_chunk  = reduced_matrix_chunk,
                       coarse_graining_chunk = coarse_graining_chunk, 
                       verbose      = verbose,
                       save_details = save_details,
@@ -96,4 +96,4 @@ if __name__ == "__main__":
                               init_tensor_chunk = init_tensor_chunk, 
                               usegpu  = True)
     
-    lnZoV = su2_2dhotrg.cal_lnZoverV()
+    lnZoV = su2_2dhotrg.cal_free_energy()

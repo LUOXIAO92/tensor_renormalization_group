@@ -10,8 +10,8 @@ from mpi4py import MPI
 import opt_einsum as oe
 from itertools import product
 
-from hotrg.HOTRG import HOTRG_info as Info
-from hotrg.HOTRG import Tensor_HOTRG as Tensor
+from .HOTRG import HOTRG_info as Info
+from .HOTRG import Tensor_HOTRG as Tensor
 from tools.linalg_tools import svd, eigh
 from tools.mpi_tools import contract_slice, gpu_syn
 
@@ -344,15 +344,15 @@ def new_pure_tensor(info:Info,
     comm.barrier()
     if Ngilt == 1:
         if direction == 'y' or direction == 'Y':
-            T0, T1 = gilt_plaq(T, T, gilt_eps, direction, gilt_legs, T.usegpu)
+            T0, T1 = gilt_plaq(T.T, T.T, gilt_eps, direction, gilt_legs, T.usegpu)
         elif direction == 'x' or direction == 'X':
-            T0, T1 = T, T
+            T0, T1 = T.T, T.T
     elif Ngilt == 2:
-        T0, T1 = gilt_plaq(T, T, gilt_eps, direction, gilt_legs, T.usegpu)
+        T0, T1 = gilt_plaq(T.T, T.T, gilt_eps, direction, gilt_legs, T.usegpu)
     gpu_syn(T.usegpu)
     comm.barrier()
 
-    if MPI_RANK == 0:
+    if MPI_RANK == where:
         T0 = tranpose(T0, direction)
         T1 = tranpose(T1, direction)
     gpu_syn(usegpu)
@@ -371,7 +371,7 @@ def new_pure_tensor(info:Info,
     comm.barrier()
 
     t0 = time.time()
-    T = coarse_graining(T0, T1, PLD, PRU, xp, comm, coarse_graining_chunk, usegpu, verbose)
+    T.T = coarse_graining(T0, T1, PLD, PRU, xp, comm, coarse_graining_chunk, usegpu, verbose)
     gpu_syn(usegpu)
     comm.barrier()
     t1 = time.time()

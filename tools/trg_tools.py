@@ -240,8 +240,8 @@ def env_tensor_for_3d_SU2_pure_gauge(A, direction:str, comm:MPI.Intercomm, use_g
         #QR right---------------------------------------------------------------------------
 
 
-    local_M_left = xp.zeros(shape=(Dcut, Dcut, Dcut, Dcut), dtype=complex)
-    for n, 
+    #local_M_left = xp.zeros(shape=(Dcut, Dcut, Dcut, Dcut), dtype=complex)
+    #for n, 
 
         
 def rsvd_for_3d_SU2_pure_gauge_initial_tensor(A, k:int, comm:MPI.Intercomm, seed=None):

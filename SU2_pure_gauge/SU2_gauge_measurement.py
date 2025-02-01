@@ -1,5 +1,6 @@
+#from ..trg.hotrg.HOTRG import Tensor_HOTRG, HOTRG_2d, HOTRG_info
 from trg.hotrg.HOTRG import Tensor_HOTRG, HOTRG_2d, HOTRG_info
-from SU2_pure_gauge_init import SU2_pure_gauge
+from .SU2_pure_gauge_init import SU2_pure_gauge
 
 class two_dims_su2puregauge_hotrg(HOTRG_2d):
     def __init__(self, 
@@ -27,12 +28,10 @@ class two_dims_su2puregauge_hotrg(HOTRG_2d):
         self.usegpu = usegpu
 
     def cal_free_energy(self):
-        Kt, Ka, Kb = self.Ks
+        #Kt, Ka, Kb = self.Ks
         su2puregauge = SU2_pure_gauge(dim     = self.dim, 
                                       Dcut    = self.Dcut, 
-                                      Kt      = Kt, 
-                                      Ka      = Ka, 
-                                      Kb      = Kb, 
+                                      Ks      = self.Ks,
                                       beta    = self.beta, 
                                       epsilon = self.epsilon, 
                                       comm    = self.comm, 

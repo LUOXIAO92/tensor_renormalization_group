@@ -19,15 +19,15 @@ mkdir -p $output_dir
 
 echo "start job"
 
-python -u ./SU2_pure_gauge/SU2_gauge.py \
+mpiexec -np 4 python -u ./SU2_gauge.py \
     --dcut ${Dcut} \
     --K "(${K}, ${K}, ${K})" \
     --L "(${Lx}, ${Ly})" \
-    --beta ${b} \
+    --beta ${b}  \
     --eps ${eps} \
-    --init_tensor_chunk "(6, 6, 1)" \
-    --reduced_mat_chunk "(8, 8, 4, 4)" \
-    --coarse_graining_chunk "(8, 8, 8)" \
+    --init_tensor_chunk     "(216, 216, 1)"\
+    --reduced_matrix_chunk  "(8, 8, 4, 4)" \
+    --coarse_graining_chunk "(8, 8, 8)"    \
     --degeneracy_eps ${degeps} \
     --rgscheme ${rgscheme} \
     --gilt_eps ${gilteps} \
