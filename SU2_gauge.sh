@@ -33,4 +33,4 @@ python -u ./SU2_pure_gauge/SU2_gauge.py \
     --gilt_eps ${gilteps} \
     --Ngilt 1 \
     --Ncutlegs 2 \
-    --out_dir ${output_dir} > ${jobname}.log
+    --out_dir ${output_dir} #> ${jobname}.log
