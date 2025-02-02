@@ -13,7 +13,7 @@ from itertools import product
 from .HOTRG import HOTRG_info as Info
 from .HOTRG import Tensor_HOTRG as Tensor
 from tools.linalg_tools import svd, eigh
-from tools.mpi_tools import contract_slice, gpu_syn
+from tools.mpi_tools import contract_slice, gpu_syn, flatten_2dim_job_results
 
 
 
@@ -86,74 +86,101 @@ def squeezer(where, T0, T1, T2, T3,
     
     def cal_R(truncate_eps=0, qr='qr', return_eigval=False):
         if qr == 'qr':
-            #if MPI_RANK == where:
-            #    contract_shape = T0.shape[0], T0.shape[1], T1.shape[0], T1.shape[3], T0.shape[3], T0.shape[3]
-            #    M_shape        = T0.shape[1], T1.shape[1], T0.shape[1], T1.shape[1]
-            #else:
-            #    contract_shape = None
-            #    M_shape        = None
-            #contract_shape = comm.bcast(obj=contract_shape, root=where)
-            #M_shape        = comm.bcast(obj=M_shape       , root=where)
-            #
-            #contract_chunk = chunk[0], chunk[1], chunk[0], chunk[1], chunk[2], chunk[3]
-            #contract_slices = contract_slice(shape=contract_shape, chunk=contract_chunk, comm=comm, gather_to_rank0=True)
-            #
-            #M = oe.contract("aibe,akbf,cjed,clfd->ijkl", xp.conj(T0), T0, xp.conj(T1), T1)
-            #if MPI_RANK == where:
-            #    operands = [[] for _ in range(MPI_SIZE)]
-            #    for n, legs in enumerate(contract_slices):
-            #        a, b, c, d, e, f = legs
-            #        print(n, T0[a,:,b,e].shape, T0[a,:,b,f].shape, T1[c,:,e,d].shape, T1[c,:,f,d].shape)
-            #        operands[n % MPI_SIZE].append([xp.conj(T0[a,:,b,e]), T0[a,:,b,f], xp.conj(T1[c,:,e,d]), T1[c,:,f,d]])
-            #else:
-            #    operands = None
-            #operands = comm.scatter(sendobj=operands, root=where)
+            if MPI_RANK == where:
+                M_shape = T0.shape[1], T1.shape[1], T0.shape[1], T1.shape[1]
+            else:
+                M_shape = None
+            M_shape = comm.bcast(obj=M_shape, root=where)
             
             #job_list = [T0†T0, T1†T1]
+            if MPI_RANK == where:
+                tensor_list = [T0, T1]
+                subscript_list = ["aibe,akbf->iekf", "cjed,clfd->jelf"]
+
+                jobs = []
+                for rank in range(MPI_SIZE):
+                    sendjob = []
+                    for njob in range(rank, 2, MPI_SIZE):
+                        if rank == where:
+                            jobs.append([subscript_list[njob], tensor_list[njob]])
+                        else:
+                            sendjob.append([subscript_list[njob], tensor_list[njob]])
+                    if rank != where:
+                        comm.send(obj=sendjob, dest=rank, tag=rank)
+            else:
+                jobs = comm.recv(source=where, tag=MPI_RANK)
+
+            if MPI_RANK < 2:
+                subscripts = []
+                operands   = []
+                for job in jobs:
+                    subscripts.append(job[0])
+                    operands.append([xp.conj(job[1]), job[1]])
+            else:
+                subscripts = None
+                operands   = None
             
                 
         elif qr == 'rq':
             if MPI_RANK == where:
-                contract_shape = T3.shape[1], T3.shape[2], T2.shape[1], T2.shape[3], T3.shape[3], T3.shape[3]
-                M_shape        = T3.shape[0], T2.shape[0], T3.shape[0], T2.shape[0]
+                M_shape = T3.shape[0], T2.shape[0], T3.shape[0], T2.shape[0]
             else:
-                contract_shape = None
-                M_shape        = None
-            contract_shape = comm.bcast(obj=contract_shape, root=where)
-            M_shape        = comm.bcast(obj=M_shape       , root=where)
+                M_shape = None
+            M_shape = comm.bcast(obj=M_shape, root=where)
 
-            contract_chunk = chunk[0], chunk[1], chunk[0], chunk[1], chunk[2], chunk[3]
-            contract_slices = contract_slice(shape=contract_shape, chunk=contract_chunk, comm=comm, gather_to_rank0=True)
-            
-            #M = oe.contract("iabe,kabf,jced,lcfd->ijkl", T3, xp.conj(T3), T2, xp.conj(T2))
+            #job_list = [T3†T3, T2†T2]
             if MPI_RANK == where:
-                operands = [[] for _ in range(MPI_SIZE)]
-                for n, legs in enumerate(contract_slices):
-                    a, b, c, d, e, f = legs
-                    operands[n % MPI_SIZE].append([T3[:,a,b,e], xp.conj(T3[:,a,b,f]), T2[:,c,e,d], xp.conj(T2[:,c,f,d])])
-            else:
-                operands = None
-            operands = comm.scatter(sendobj=operands, root=where)
+                tensor_list = [T3, T2]
+                subscript_list = ["iabe,kabf->iekf", "jced,lcfd->jelf"]
 
-        subscripts = {'qr' : 'aibe,akbf,cjed,clfd->ijkl',
-                      'rq' : 'iabe,kabf,jced,lcfd->ijkl'}
-        local_M = xp.zeros(shape=M_shape, dtype=complex)
+                jobs = []
+                for rank in range(MPI_SIZE):
+                    sendjob = []
+                    for njob in range(rank, 2, MPI_SIZE):
+                        if rank == where:
+                            jobs.append([subscript_list[njob], tensor_list[njob]])
+                        else:
+                            sendjob.append([subscript_list[njob], tensor_list[njob]])
+                    if rank != where:
+                        comm.send(obj=sendjob, dest=rank, tag=rank)
+            else:
+                jobs = comm.recv(source=where, tag=MPI_RANK)
+
+            if MPI_RANK < 2:
+                subscripts = []
+                operands   = []
+                for job in jobs:
+                    subscripts.append(job[0])
+                    operands.append([job[1], xp.conj(job[1])])
+            else:
+                subscripts = None
+                operands   = None
+
         gpu_syn(usegpu)
         comm.barrier()
         t0  = time.time()
         t00 = time.time()
 
-        for n, ops in enumerate(operands):
-            local_M += oe.contract(subscripts[qr], *ops)
-            if verbose:
-                if (MPI_RANK == 0) and (n % 100 == 0) and (n > 0):
-                    t1 = time.time()
-                    print(f"Local iteration:{n} at rank{MPI_RANK}, time= {t1-t0:.2e} s")
-                    t0 = time.time()
-                elif (MPI_RANK == 0) and (n == 0):
-                    print(f"Start calculate reduced density matrix.")
-        
-        M = comm.reduce(sendobj=local_M, op=MPI.SUM, root=0)
+        if MPI_RANK < 2:
+            results = []
+            for ss, ops in zip(subscripts, operands):
+                results.append(
+                    oe.contract(ss, *ops)
+                )
+        else:
+            results = None
+        gpu_syn(usegpu)
+        comm.barrier()
+
+        results = comm.gather(sendobj=results, root=where)
+        if MPI_RANK == where:
+            results = flatten_2dim_job_results(results, job_size=2, comm=comm)
+            left, right = results
+            M = oe.contract("iekf,jelf->ijkl", left, right)
+        else:
+            M = None
+        del results, operands, subscripts, jobs
+
         gpu_syn(usegpu)
         comm.barrier()
         t11 = time.time()
@@ -162,7 +189,7 @@ def squeezer(where, T0, T1, T2, T3,
 
         
         if MPI_RANK == where:
-            M = xp.reshape(M,  (M.shape[0]*M.shape[1], M.shape[2]*M.shape[3]))
+            M = xp.reshape(M, (M.shape[0]*M.shape[1], M.shape[2]*M.shape[3]))
             Eigvect, Eigval, _ = svd(M, shape=[[0], [1]], k=min(*M.shape), truncate_eps=truncate_eps)
             if qr == 'qr':
                 R = oe.contract("ia,a->ai", xp.conj(Eigvect), xp.sqrt(Eigval))
