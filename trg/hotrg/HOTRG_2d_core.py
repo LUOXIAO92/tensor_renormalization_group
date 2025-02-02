@@ -86,30 +86,31 @@ def squeezer(where, T0, T1, T2, T3,
     
     def cal_R(truncate_eps=0, qr='qr', return_eigval=False):
         if qr == 'qr':
-            if MPI_RANK == where:
-                contract_shape = T0.shape[0], T0.shape[1], T1.shape[0], T1.shape[3], T0.shape[3], T0.shape[3]
-                M_shape        = T0.shape[1], T1.shape[1], T0.shape[1], T1.shape[1]
-            else:
-                contract_shape = None
-                M_shape        = None
-            contract_shape = comm.bcast(obj=contract_shape, root=where)
-            M_shape        = comm.bcast(obj=M_shape       , root=where)
-            
-            contract_chunk = chunk[0], chunk[1], chunk[0], chunk[1], chunk[2], chunk[3]
-            contract_slices = contract_slice(shape=contract_shape, chunk=contract_chunk, comm=comm, gather_to_rank0=True)
-            
+            #if MPI_RANK == where:
+            #    contract_shape = T0.shape[0], T0.shape[1], T1.shape[0], T1.shape[3], T0.shape[3], T0.shape[3]
+            #    M_shape        = T0.shape[1], T1.shape[1], T0.shape[1], T1.shape[1]
+            #else:
+            #    contract_shape = None
+            #    M_shape        = None
+            #contract_shape = comm.bcast(obj=contract_shape, root=where)
+            #M_shape        = comm.bcast(obj=M_shape       , root=where)
+            #
+            #contract_chunk = chunk[0], chunk[1], chunk[0], chunk[1], chunk[2], chunk[3]
+            #contract_slices = contract_slice(shape=contract_shape, chunk=contract_chunk, comm=comm, gather_to_rank0=True)
+            #
             #M = oe.contract("aibe,akbf,cjed,clfd->ijkl", xp.conj(T0), T0, xp.conj(T1), T1)
             #if MPI_RANK == where:
             #    operands = [[] for _ in range(MPI_SIZE)]
             #    for n, legs in enumerate(contract_slices):
             #        a, b, c, d, e, f = legs
+            #        print(n, T0[a,:,b,e].shape, T0[a,:,b,f].shape, T1[c,:,e,d].shape, T1[c,:,f,d].shape)
             #        operands[n % MPI_SIZE].append([xp.conj(T0[a,:,b,e]), T0[a,:,b,f], xp.conj(T1[c,:,e,d]), T1[c,:,f,d]])
             #else:
             #    operands = None
             #operands = comm.scatter(sendobj=operands, root=where)
             
-            contract_iter = 
-            for n, legs in enumerate(contract_slices):
+            #job_list = [T0†T0, T1†T1]
+            
                 
         elif qr == 'rq':
             if MPI_RANK == where:

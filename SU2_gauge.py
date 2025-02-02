@@ -1,7 +1,9 @@
 from mpi4py import MPI
 import argparse
 import ast
-
+import sys
+#sys.path.append('../')
+#sys.path.append('.')
 
 pars = argparse.ArgumentParser()
 pars.add_argument('--dcut'  , default=32, type=int)
