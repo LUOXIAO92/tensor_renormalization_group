@@ -13,7 +13,7 @@ from itertools import product
 from .HOTRG import HOTRG_info as Info
 from .HOTRG import Tensor_HOTRG as Tensor
 from tools.linalg_tools import svd, eigh
-from tools.mpi_tools import contract_slice, gpu_syn, flatten_2dim_job_results
+from tools.mpi_tools import contract_slice, gpu_syn, flatten_2dim_job_results, contract_slicer
 
 
 
@@ -211,7 +211,7 @@ def squeezer(where, T0, T1, T2, T3,
     gpu_syn(usegpu)
     comm.barrier()
     
-    if MPI_RANK == 0:
+    if MPI_RANK == where:
         #U, S, VH = cp.linalg.svd(R1@R2)
         R1R2 = R1@R2
         k = min(*R1R2.shape, Dcut)
@@ -251,7 +251,7 @@ def squeezer(where, T0, T1, T2, T3,
                 E10, E20 = xp.max(Eigval1), xp.max(Eigval2)
                 E1 = Eigval1 / E10
                 E2 = Eigval2 / E20
-                out.write(f'#λ_l={E10:.12e}, λ_r={E20:.12e}\n')
+                out.write(f"#lambda_l={E10:.12e}, lambda_r={E20:.12e}\n")
                 for e1, e2 in zip(E1, E2):
                     out.write(f'{e1:.12e} {e2:.12e}\n')
 
@@ -264,7 +264,7 @@ def squeezer(where, T0, T1, T2, T3,
 
     return P2, P1
 
-def coarse_graining(T0, T1, PLD, PRU, xp, comm:MPI.Intercomm, chunk=None|tuple, usegpu=False, verbose=False):
+def coarse_graining(where, T0, T1, PLD, PRU, xp, comm:MPI.Intercomm, chunk=None|tuple, usegpu=False, verbose=False):
     """
     >>> T0_{acke}, T1_{bedl}, PLD_{iab}, PRU_{cdj}
     >>>            l
@@ -290,7 +290,7 @@ def coarse_graining(T0, T1, PLD, PRU, xp, comm:MPI.Intercomm, chunk=None|tuple, 
     MPI_SIZE = comm.Get_size()
 
     χs = None
-    if MPI_RANK == 0:
+    if MPI_RANK == where:
         dtype = T0.dtype
         χ_a = PLD.shape[1]
         χ_e = T0.shape[2]
@@ -300,23 +300,9 @@ def coarse_graining(T0, T1, PLD, PRU, xp, comm:MPI.Intercomm, chunk=None|tuple, 
         χ_k = T0.shape[2]
         χ_l = T1.shape[3]
         χs = [χ_a, χ_e, χ_d, χ_i, χ_j, χ_k, χ_l, dtype]
-    χs = comm.scatter(sendobj=χs, root=0)
+    χs = comm.bcast(obj=χs, root=where)
     χ_a, χ_e, χ_d, χ_i, χ_j, χ_k, χ_l, dtype = χs
     del χs
-    
-    contract_slices = contract_slice(shape=(χ_a, χ_d, χ_e), chunk=chunk, comm=comm, gather_to_rank0=True)
-    if MPI_RANK == 0:
-        operands = [[] for _ in range(MPI_SIZE)]
-        for n, legs in enumerate(contract_slices):
-            a, d, e = legs
-            if n % MPI_SIZE == MPI_RANK:
-                operands[MPI_RANK].append([T0[a,:,:,e], T1[:,d,e,:], PLD[:,a,:], PRU[:,d,:]])
-    else:
-        operands = None
-    operands = comm.scatter(sendobj=operands, root=0)
-    gpu_syn(usegpu)
-    comm.barrier()
-    #del T0, T1, PLD, PRU
 
     path = [(0, 2), (0, 1), (0, 1)]
     subscripts = "acke,bdel,iab,cdj->ijkl"
@@ -327,18 +313,35 @@ def coarse_graining(T0, T1, PLD, PRU, xp, comm:MPI.Intercomm, chunk=None|tuple, 
     t0  = time.time()
     t00 = time.time()
 
-    for n, ops in operands:
-        local_T += oe.contract(subscripts, *ops, optimize=path)
-
+    contract_iter = contract_slicer(shape=(χ_a, χ_d, χ_e), chunk=chunk, comm=comm)
+    for n, legs in enumerate(contract_iter):
+        a, d, e = legs
+        dest_rank = n % MPI_SIZE
+        if MPI_RANK == where:
+            oprands = [T0[a,:,:,e], T1[:,d,e,:], PLD[:,a,:], PRU[:,d,:]]
+            if dest_rank != where:
+                #print(f"send from rank{MPI_RANK} to rank{dest_rank}")
+                comm.send(obj=oprands, dest=dest_rank, tag=dest_rank)
+            #else:
+                #print(f"keep data on rank{MPI_RANK}")
+        else:
+            #print(f"recv from rank{where} on rank{MPI_RANK}")
+            oprands = comm.recv(source=where, tag=MPI_RANK)
+        print(f"rank{MPI_RANK}")
+        local_T += oe.contract(subscripts, *oprands, optimize=path)
+        del oprands
+            
         if verbose:
-            if (MPI_RANK == 0) and (n % 100 == 0) and (n > 0):
+            if (MPI_RANK == 0) and (n % 8 == 0) and (n > 0):
                 t1 = time.time()
                 print(f"Local iteration:{n} at rank{MPI_RANK}, time= {t1-t0:.2e} s")
                 t0 = time.time()
             elif (MPI_RANK == 0) and (n == 0):
                 print(f"Start coarse graining.")
-    
-    T = comm.reduce(sendobj=local_T, op=MPI.SUM, root=0)
+
+    print(f"rank{MPI_RANK} finish")
+    T = comm.reduce(sendobj=local_T, op=MPI.SUM, root=where)
+    print("finish11111")
     gpu_syn(usegpu)
     comm.barrier()
     t11 = time.time()
@@ -347,15 +350,6 @@ def coarse_graining(T0, T1, PLD, PRU, xp, comm:MPI.Intercomm, chunk=None|tuple, 
 
     return T
 
-#def normalize(T, usegpu=False):
-#    if usegpu:
-#        from cupy import abs
-#    else:
-#        from numpy import abs
-#    c = oe.contract("iijj", T)
-#    c = abs(c)
-#    T = T / c
-#    return T, c
 
 def new_pure_tensor(info:Info,
                     T:Tensor, 
@@ -412,7 +406,7 @@ def new_pure_tensor(info:Info,
     comm.barrier()
 
     t0 = time.time()
-    T.T = coarse_graining(T0, T1, PLD, PRU, xp, comm, coarse_graining_chunk, usegpu, verbose)
+    T.T = coarse_graining(where, T0, T1, PLD, PRU, xp, comm, coarse_graining_chunk, usegpu, verbose)
     gpu_syn(usegpu)
     comm.barrier()
     t1 = time.time()

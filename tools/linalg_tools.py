@@ -34,7 +34,7 @@ def truncate(s0, k:int, degeneracy_eps, truncate_eps):
         raise SystemExit("Only support numpy.ndarray or cupy.ndarray")
 
     if degeneracy_eps == 0 and truncate_eps == 0:
-        return len(s0), 0
+        return k, 0
     if k > len(s0):
         return len(s0), 0
     

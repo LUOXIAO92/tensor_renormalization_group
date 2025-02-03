@@ -62,6 +62,14 @@ def pure_gauge_slice(shape:tuple, chunk:tuple, tolist=False):
 
     return iteration
 
+def contract_slicer(shape:tuple, chunk:None|tuple, comm:MPI.Intercomm):
+    assert len(shape) == len(chunk), "Size of shape must match chunk"
+    lenchunk = len(chunk)
+    slicing = [[slice(j, j+chunk[i]) for j in range(0, shape[i], chunk[i])] for i in range(lenchunk)]
+
+    iteration = product(*slicing)
+
+    return iteration
 
 def contract_slice(shape:tuple, chunk:None|tuple, comm:MPI.Intercomm, gather_to_rank0=True):
     """
