@@ -5,9 +5,11 @@ K=6
 b=4.0
 Lx=6
 Ly=6
-eps=1e+3
+eps=0
 
 rgscheme="hotrg"
+
+truncate=0
 degeps=0
 
 gilteps=0
@@ -29,6 +31,7 @@ mpiexec -np 4 python -u ./SU2_gauge.py \
     --reduced_matrix_chunk  "(64, 64, 1, 1)" \
     --coarse_graining_chunk "(64, 64, 1)"    \
     --degeneracy_eps ${degeps} \
+    --truncate_eps ${truncate} \
     --rgscheme ${rgscheme} \
     --gilt_eps ${gilteps} \
     --Ngilt 1 \

@@ -108,8 +108,8 @@ def admissibility_condition(TrP, ε:float):
         from cupy.linalg import norm as linalgnorm
         import cupy as xp
     
-    #norm = 4 - 2 * TrP.real
-    norm = 2 - TrP.real
+    norm = 4 - 2 * TrP.real
+    #norm = 2 - TrP.real
     assert linalgnorm(norm.imag) < 1e-12, "2 - 2*Re(P00) - 2*Re(P11) + Tr(PP†) must be real!"
     norm = sqrt(abs(norm))
     index = norm > ε

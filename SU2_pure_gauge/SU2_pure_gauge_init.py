@@ -224,7 +224,7 @@ class SU2_pure_gauge:
                                                               cp.sqrt(J[i0]), cp.sqrt(J[i1]), cp.sqrt(J[i2]), cp.sqrt(J[i3]), A)
                 #A = oe.contract("k,l,k,l,ijkl->ijkl", w[i2], w[i3], J[i2], J[i3], A)
                 q0, q1, q2, q3 = Q0[:,i0], Q1[:,i1], Q2[:,i2], Q3[:,i3]
-                T_local += oe.contract("ABCD,lA,uB,rC,dD->lurd", A, q0, q1, q2, q3)
+                T_local += oe.contract("ABCD,xA,YB,XC,yD->xXyY", A, q0, q1, q2, q3)
         
                 if (n > 0) and (n % (25*WORLD_MPI_SIZE) == 0) and (WORLD_MPI_RANK == 0):
                     t1 = time.time() if WORLD_MPI_RANK == 0 else None

@@ -2,8 +2,7 @@ from mpi4py import MPI
 import argparse
 import ast
 import sys
-#sys.path.append('../')
-#sys.path.append('.')
+from tools.mpi_tools import use_gpu
 
 pars = argparse.ArgumentParser()
 pars.add_argument('--dcut'  , default=32, type=int)
@@ -34,6 +33,7 @@ if __name__ == "__main__":
     WORLD_SIZE = WORLD_COMM.Get_size()
     WORLD_RANK = WORLD_COMM.Get_rank()
     COMM_INFO  = WORLD_COMM.Get_info()
+    use_gpu(usegpu=True, comm=WORLD_COMM)
 
     args = pars.parse_args()
 
@@ -89,6 +89,7 @@ if __name__ == "__main__":
                       outdir       = out_dir,
                       comm         = WORLD_COMM)
     
+    eps = None if eps == 0 else eps
     su2_2dhotrg = SU2_2dHOTRG(info    = info,
                               dim     = 2, 
                               Ks      = Ks, 

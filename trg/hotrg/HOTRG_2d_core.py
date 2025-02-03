@@ -17,7 +17,7 @@ from tools.mpi_tools import contract_slice, gpu_syn, flatten_2dim_job_results, c
 
 
 
-def tranpose(where, T, do_what:str, direction:str, comm:MPI.Intercomm):
+def tranpose(where, T, do_what:str, direction:str, xp, comm:MPI.Intercomm):
     """
     Parameters
     ----------
@@ -33,19 +33,20 @@ def tranpose(where, T, do_what:str, direction:str, comm:MPI.Intercomm):
 
     ----------
     """
-
+    
+    
     if comm.Get_rank() == where:
         if do_what == "transpose":
             if direction == "Y" or direction == "y":
                 pass
             elif direction == "X" or direction == "x":
-                T = T.transpose(axes=(2,3,0,1))
+                T = xp.transpose(axes=(2,3,0,1))
 
         elif do_what == "restore":
             if direction == "Y" or direction == "y":
                 pass
             elif direction == "X" or direction == "x":
-                T = T.transpose(axes=(2,3,0,1))
+                T = xp.transpose(axes=(2,3,0,1))
 
     comm.barrier()
     return T
@@ -85,6 +86,8 @@ def squeezer(where, T0, T1, T2, T3,
         assert (T0 is not None) and (T1 is not None) and (T2 is not None) and (T3 is not None), 'All Tensors must be kept on the same rank'
     
     def cal_R(truncate_eps=0, qr='qr', return_eigval=False):
+        t00 = time.time()
+
         if qr == 'qr':
             if MPI_RANK == where:
                 M_shape = T0.shape[1], T1.shape[1], T0.shape[1], T1.shape[1]
@@ -158,9 +161,7 @@ def squeezer(where, T0, T1, T2, T3,
 
         gpu_syn(usegpu)
         comm.barrier()
-        t0  = time.time()
-        t00 = time.time()
-
+        
         if MPI_RANK < 2:
             results = []
             for ss, ops in zip(subscripts, operands):
@@ -206,6 +207,35 @@ def squeezer(where, T0, T1, T2, T3,
         else:
             return R
     
+    def cal_R2(truncate_eps=0, qr='qr', return_eigval=False):
+        if MPI_RANK == where:
+            if qr == 'qr':
+                LdagL = oe.contract("aibe,cjed,akbf,clfd->ijkl", xp.conj(T0), xp.conj(T1), T0, T1)
+                LdagL = xp.reshape(LdagL,  (LdagL.shape[0]*LdagL.shape[1], LdagL.shape[2]*LdagL.shape[3]))
+                Eigvect1, Eigval1, _ = svd(LdagL, shape=[[0], [1]], k=min(*LdagL.shape), truncate_eps=truncate_eps)
+                if return_eigval:
+                    R = oe.contract("ia,a->ai", xp.conj(Eigvect1), xp.sqrt(Eigval1))
+                    return R, Eigval1
+                else:
+                    return R
+        
+            elif qr == 'rq':
+                RRdag = oe.contract("iabe,jced,kabf,lcfd->ijkl", T3, T2, xp.conj(T3), xp.conj(T2))
+                RRdag = xp.reshape(RRdag,  (RRdag.shape[0]*RRdag.shape[1], RRdag.shape[2]*RRdag.shape[3]))
+                Eigvect2, Eigval2, _ = svd(RRdag, shape=[[0], [1]], k=min(*RRdag.shape), truncate_eps=truncate_eps)
+                if return_eigval:
+                    R = oe.contract("ia,a->ia", Eigvect2, xp.sqrt(Eigval2))
+                    return R, Eigval2
+                else:
+                    return R
+
+        else:
+            if return_eigval:
+                return None, None
+            else:
+                return None
+
+
     R1, Eigval1 = cal_R(truncate_eps, qr='qr', return_eigval=True)
     R2, Eigval2 = cal_R(truncate_eps, qr='rq', return_eigval=True)
     gpu_syn(usegpu)
@@ -319,29 +349,24 @@ def coarse_graining(where, T0, T1, PLD, PRU, xp, comm:MPI.Intercomm, chunk=None|
         dest_rank = n % MPI_SIZE
         if MPI_RANK == where:
             oprands = [T0[a,:,:,e], T1[:,d,e,:], PLD[:,a,:], PRU[:,d,:]]
-            if dest_rank != where:
-                #print(f"send from rank{MPI_RANK} to rank{dest_rank}")
+            if MPI_RANK != dest_rank:
                 comm.send(obj=oprands, dest=dest_rank, tag=dest_rank)
-            #else:
-                #print(f"keep data on rank{MPI_RANK}")
-        else:
-            #print(f"recv from rank{where} on rank{MPI_RANK}")
+            else:
+                local_T += oe.contract(subscripts, *oprands, optimize=path)
+
+        elif (MPI_RANK != where) and (MPI_RANK == dest_rank):
             oprands = comm.recv(source=where, tag=MPI_RANK)
-        print(f"rank{MPI_RANK}")
-        local_T += oe.contract(subscripts, *oprands, optimize=path)
-        del oprands
-            
+            local_T += oe.contract(subscripts, *oprands, optimize=path)
+        
         if verbose:
             if (MPI_RANK == 0) and (n % 8 == 0) and (n > 0):
                 t1 = time.time()
-                print(f"Local iteration:{n} at rank{MPI_RANK}, time= {t1-t0:.2e} s")
+                print(f"Local iteration:{n}, time= {t1-t0:.2e} s")
                 t0 = time.time()
             elif (MPI_RANK == 0) and (n == 0):
                 print(f"Start coarse graining.")
 
-    print(f"rank{MPI_RANK} finish")
     T = comm.reduce(sendobj=local_T, op=MPI.SUM, root=where)
-    print("finish11111")
     gpu_syn(usegpu)
     comm.barrier()
     t11 = time.time()
@@ -388,8 +413,8 @@ def new_pure_tensor(info:Info,
     gpu_syn(T.usegpu)
     comm.barrier()
 
-    T0 = tranpose(where, T0, 'transpose', direction, comm)
-    T1 = tranpose(where, T1, 'transpose', direction, comm)
+    T0 = tranpose(where, T0, 'transpose', xp, direction, comm)
+    T1 = tranpose(where, T1, 'transpose', xp, direction, comm)
     gpu_syn(usegpu)
     comm.barrier()
 
@@ -413,7 +438,7 @@ def new_pure_tensor(info:Info,
 
     del PLD, PRU, T0, T1
 
-    T.T = tranpose(where, T.T, "restore", direction, comm)
+    T.T = tranpose(where, T.T, "restore", xp, direction, comm)
     gpu_syn(usegpu)
     comm.barrier()
     

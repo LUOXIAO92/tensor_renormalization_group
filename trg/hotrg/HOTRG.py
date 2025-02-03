@@ -149,6 +149,7 @@ class Tensor_HOTRG:
     def update_nrgsteps(self, direction:str):
         assert direction in self.rgstep.keys()
         self.rgstep[direction] += 1
+        self.nrgsteps = sum(self.rgstep.values())
     
     def normalize(self):
         
@@ -230,47 +231,50 @@ class HOTRG_2d:
 
     def save_singular_values(self, Tpure:Tensor_HOTRG):
 
-        if self.comm.Get_size() == Tpure.where:
-            mat = Tpure.T.transpose((0,2,1,3))
-            xp = Tpure.xp
+        if self.comm.Get_rank() == Tpure.where:
+            if self.info.save_details:
+                mat = Tpure.T.transpose((0,2,1,3))
+                mat = mat.reshape((mat.shape[0]*mat.shape[1], mat.shape[2]*mat.shape[3]))
+                xp = Tpure.xp
 
-            _, s, _ = xp.linalg.svd(mat)
+                _, s, _ = xp.linalg.svd(mat)
 
-            nrgsteps = sum(Tpure.rgstep.values())
-            if nrgsteps == 0:
-                mode = 'w'
-            else:
-                mode = 'a'
-            output_dir = self.info.outdir.rstrip('/') + '/tensor'
-            filename = output_dir + f'/tensor_n{nrgsteps}.dat'
-            if not os.path.exists(output_dir):
-                os.mkdir(output_dir)
-            
-            with open(filename, mode) as out:
-                s0 = xp.max(s)
-                s = s / s0
-                out.write(f'#λ0={s0:.12e}\n')
-                for ss in s:
-                    out.write(f'{ss:.12e}\n')
+                nrgsteps = sum(Tpure.rgstep.values())
+                if nrgsteps == 0:
+                    mode = 'w'
+                else:
+                    mode = 'a'
+                output_dir = self.info.outdir.rstrip('/') + '/tensor'
+                filename = output_dir + f'/tensor_n{nrgsteps}.dat'
+                if not os.path.exists(output_dir):
+                    os.mkdir(output_dir)
+
+                with open(filename, mode) as out:
+                    s0 = xp.max(s)
+                    s = s / s0
+                    out.write(f'#lambda_0={s0:.12e}\n')
+                    for ss in s:
+                        out.write(f'{ss:.12e}\n')
         
         gpu_syn(Tpure.usegpu)
         self.comm.barrier()
 
-    def cal_lnZoverV(self, T:Tensor_HOTRG):
-        TrT = T.trace()
-        lnnorm = sum(T.ln_factor.values())
-        lnZoV = lnnorm + TrT / 2**(T.nrgsteps)
+    def cal_lnZoverV(self, Tpure:Tensor_HOTRG):
+        TrT = Tpure.trace()
+        lnnorm = sum(Tpure.ln_factor.values())
+        lnZoV = lnnorm + TrT / 2**(Tpure.nrgsteps)
 
         if self.info.save_details:
-            if T.nrgsteps == 0:
-                mode = 'w'
-            else:
-                mode = 'a'
-            outdir = self.info.outdir
-            fname  = outdir.rstrip('/') + 'lnZoverV.dat'
-            
-            with open(fname, mode) as out:
-                out.write(f'{lnZoV.real:.12e}\n')
+            if self.comm.Get_rank() == Tpure.where:
+                if Tpure.nrgsteps == 0:
+                    mode = 'w'
+                else:
+                    mode = 'a'
+                outdir = self.info.outdir
+                fname  = outdir.rstrip('/') + '/lnZoverV.dat'
+
+                with open(fname, mode) as out:
+                    out.write(f'{lnZoV.real:.12e}\n')
 
         return lnZoV
 
@@ -289,11 +293,10 @@ class HOTRG_2d:
 
             return Tpure
         
-        
-
         Tpure = Tpure.normalize()
         nrgsteps = Tpure.nrgsteps
         Tpure.ln_factor[nrgsteps] = math.log(Tpure.factor[nrgsteps]) / 2**(nrgsteps)
+        self.save_singular_values(Tpure)
         lnZoV = self.cal_lnZoverV(Tpure)
 
         if self.rank == 0:
@@ -309,7 +312,10 @@ class HOTRG_2d:
             
             Tpure = exec_rg(Tpure, direction)
 
+            #compute operators
+            self.save_singular_values(Tpure)
             lnZoV = self.cal_lnZoverV(Tpure)
+
             if self.rank == 0:
                 print(f"{Tpure.nrgsteps}-th rgstep finished. lnZ/V={lnZoV}")
             
