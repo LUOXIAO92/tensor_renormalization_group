@@ -260,9 +260,10 @@ class HOTRG_2d:
         self.comm.barrier()
 
     def cal_lnZoverV(self, Tpure:Tensor_HOTRG):
+        xp = Tpure.xp
         TrT = Tpure.trace()
         lnnorm = sum(Tpure.ln_factor.values())
-        lnZoV = lnnorm + TrT / 2**(Tpure.nrgsteps)
+        lnZoV = lnnorm + xp.log(TrT) / 2**(Tpure.nrgsteps)
 
         if self.info.save_details:
             if self.comm.Get_rank() == Tpure.where:
@@ -270,6 +271,7 @@ class HOTRG_2d:
                     mode = 'w'
                 else:
                     mode = 'a'
+                
                 outdir = self.info.outdir
                 fname  = outdir.rstrip('/') + '/lnZoverV.dat'
 
@@ -300,7 +302,7 @@ class HOTRG_2d:
         lnZoV = self.cal_lnZoverV(Tpure)
 
         if self.rank == 0:
-            print(f"lnZ/V={lnZoV}")
+            print(f"lnZ/V={lnZoV}. c={Tpure.factor[Tpure.nrgsteps]}")
 
         gpu_syn(Tpure.usegpu)
         self.comm.barrier()
@@ -317,7 +319,7 @@ class HOTRG_2d:
             lnZoV = self.cal_lnZoverV(Tpure)
 
             if self.rank == 0:
-                print(f"{Tpure.nrgsteps}-th rgstep finished. lnZ/V={lnZoV}")
+                print(f"{Tpure.nrgsteps}-th rgstep finished. lnZ/V={lnZoV}. c={Tpure.factor[Tpure.nrgsteps]}")
             
 
         return Tpure
@@ -328,109 +330,5 @@ class HOTRG_2d:
     def two_point_function_renormalization(self, Tpure:Tensor_HOTRG, *Timpure:Tensor_HOTRG):
         pass
 
-
-
-
-
-
-#class Tensor_HOTRG:
-#    def __init__(self, dim, Dcut, comm:MPI.Intercomm):
-#        #basic data----------
-#        self.dim = dim
-#        self.Dcut = Dcut
-#        self.comm = comm
-#        self.WORLD_RANK = comm.Get_rank()
-#
-#        #need to be initialized---
-#        self.T         = None
-#        self.is_impure = False
-#        self.coor      = None
-#
-#        self.map_info = None
-#        self.chunk_shape = None
-#
-#        self.type  = None
-#        self.shape = None
-#        self.ndim  = None
-#        #-------------------------
-#
-#    def import_from_dist_tensor(self, Tdist, shape:tuple, chunk:tuple, map_info:list, is_impure=False, coor=None):
-#        if type(Tdist) == np.ndarray:
-#            xp = np
-#            usegpu = False
-#        elif type(Tdist) == cp.ndarray:
-#            xp = cp
-#            usegpu = True
-#        else:
-#            raise SystemExit("Only suppose ndarray of numpy or cupy.")
-#        
-#        if is_impure:
-#            assert coor is not None, "Coordinate of impure tensor is needed."
-#        
-#        comm = self.comm
-#        WORLD_SIZE = comm.Get_size()
-#        WORLD_RANK = comm.Get_rank()
-#
-#        assert len(chunk) == 2*self.dim, "chunk dimension must mach system dimension."
-#
-#        self.T = Tdist
-#        self.map_info = map_info
-#        self.ndim  = Tdist.ndim
-#        self.shape = shape
-#        self.type  = type(Tdist)
-#        self.chunk_shape = chunk
-#        self.is_impure   = is_impure
-#        self.coor        = coor
-#
-#    def init_dist_tensor(self, T, chunk:tuple, is_impure=False, coor=None):
-#        if type(T) == np.ndarray:
-#            xp = np
-#            usegpu = False
-#        elif type(T) == cp.ndarray:
-#            xp = cp
-#            usegpu = True
-#        else:
-#            raise SystemExit("Only suppose ndarray of numpy or cupy.")
-#        
-#        if is_impure:
-#            assert coor is not None, "Coordinate of impure tensor is needed."
-#        
-#        comm = self.comm
-#        WORLD_SIZE = comm.Get_size()
-#        WORLD_RANK = comm.Get_rank()
-#
-#        assert len(chunk) == 2*self.dim, "chunk dimension must mach system dimension."
-#
-#        
-#        if WORLD_RANK == 0:
-#            assert T.ndim == len(chunk), "chunk dimension must mach tensor dimension"
-#            self.ndim  = T.ndim
-#            self.shape = T.shape
-#            self.type  = type(T)
-#
-#        self.shape = comm.bcast(obj=self.ndim,  root=0)
-#        self.shape = comm.bcast(obj=self.shape, root=0)
-#        self.type  = comm.bcast(obj=self.type,  root=0)
-#        self.chunk_shape = chunk
-#        self.is_impure   = is_impure
-#        self.coor        = coor
-#
-#        self.map_info = mapping_infomation(shape=self.shape, chunk=self.chunk_shape, comm=comm)
-#        T_local = None
-#        if WORLD_RANK == 0:
-#            T_local = [[] for _ in range(WORLD_SIZE)]
-#            for rank in range(WORLD_SIZE):
-#                for s in self.map_info:
-#                    T_local[rank].append(T[s])
-#        self.T = comm.scatter(sendobj=T_local, root=0)
-#        del T_local
-#        gpu_syn(usegpu)
-#        comm.barrier()
-#
-#
-#    def transpose(self, axes:tuple):
-        
-
-        
 
 

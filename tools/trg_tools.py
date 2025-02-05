@@ -141,20 +141,19 @@ def plaquette_contraction_for_hosvd(β:float, ε:float|None, U, w, J, leg_hosvd,
         i0, i1, i2, i3 = i
         if n % WORLD_MPI_SIZE == WORLD_MPI_RANK:
 
-            TrP = oe.contract("abi,bcj,dck,adl->ijkl", conj(U[:,:,i0]), conj(U[:,:,i1]), U[:,:,i2], U[:,:,i3])
+            #TrP = oe.contract("abi,bcj,dck,adl->ijkl", conj(U[:,:,i0]), conj(U[:,:,i1]), U[:,:,i2], U[:,:,i3])
+            TrP = oe.contract("dci,adj,abk,bcl->ijkl", conj(U[:,:,i0]), conj(U[:,:,i1]), U[:,:,i2], U[:,:,i3])
 
             if ε is not None:
-                #P = oe.contract("abi,bcj,dck,edl->aeijkl", conj(U[:,:,i0]), conj(U[:,:,i1]), U[:,:,i2], U[:,:,i3])
                 norm, idx = admissibility_condition(TrP, ε)
                 A = (1 - 0.5*TrP.real) / (1 - (norm / ε))
                 A = exp(-β * A)
                 A[idx] = 0.0
             else:
-                A = exp(-β * (1 - 0.5*TrP))
+                A = exp(-β * (1 - 0.5*TrP.real))
 
             A = oe.contract("i,j,k,l,i,j,k,l,ijkl->ijkl", sqrt(w[i0]), sqrt(w[i1]), sqrt(w[i2]), sqrt(w[i3]), 
                                                           sqrt(J[i0]), sqrt(J[i1]), sqrt(J[i2]), sqrt(J[i3]), A)
-            #A = oe.contract("k,l,k,l,ijkl->ijkl", w[i2], w[i3], J[i2], J[i3], A)
             M_local += oe.contract(subscripts[leg_hosvd], A, conj(A))
             num_inf = len(M_local[M_local == inf])
             assert num_inf == 0, f"Overflow at {n}th iteration. Have {num_inf} infs."

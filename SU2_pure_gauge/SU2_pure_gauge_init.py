@@ -14,16 +14,16 @@ class SU2_pure_gauge:
                  dim:int, 
                  Dcut:int, 
                  Ks:tuple|list,
-                 beta:float, 
-                 epsilon:float|None, 
+                 β:float, 
+                 ε:float|None, 
                  comm:MPI.Intracomm, 
                  use_gpu=False):
         
         self.dim  = dim
         self.Dcut = Dcut
         self.Ks   = Ks
-        self.beta = beta
-        self.epsilon = epsilon
+        self.β = β
+        self.ε = ε
 
         self.comm    = comm
         self.use_gpu = use_gpu
@@ -78,7 +78,7 @@ class SU2_pure_gauge:
                 WORLD_MPI_COMM.Barrier()
                 gpu_syn(self.use_gpu)
                 leg_hosvd = legs_to_hosvd[i]
-                M_tmp = plaquette_contraction_for_hosvd(self.beta, self.epsilon, U, w, J, leg_hosvd, iteration[leg_hosvd], 
+                M_tmp = plaquette_contraction_for_hosvd(self.β, self.ε, U, w, J, leg_hosvd, iteration[leg_hosvd], 
                                                         self.comm, use_gpu=self.use_gpu, verbose=True)
                 M_list.append(M_tmp)
                 WORLD_MPI_COMM.Barrier()
@@ -114,12 +114,6 @@ class SU2_pure_gauge:
         eigvals, vs = [], []
         for m in M:
             e, v = eigh(m, shape=[[0], [1]], k=chi, truncate_eps=1e-10, degeneracy_eps=1e-5)
-            #v, e, _ = cp.linalg.svd(m)
-            #e = e[::-1]
-            #v = v[:,::-1]
-            #e = e[:chi]
-            #e[e<1e-16] = 1e-16
-            #v = v[:,:chi]
             eigvals.append(e)
             vs.append(v)
         WORLD_MPI_COMM.Barrier()
@@ -136,7 +130,6 @@ class SU2_pure_gauge:
         all_vs = []
         for rank in range(WORLD_MPI_SIZE):
             if rank == WORLD_MPI_RANK:
-                print(f"buf size{len(vs)}, at rank{WORLD_MPI_RANK}")
                 buf = vs
             else:
                 buf = None
@@ -145,50 +138,8 @@ class SU2_pure_gauge:
         del vs
         WORLD_MPI_COMM.barrier()
 
-        print("allvs.size",len(all_vs[0]))
         vs = flatten_2dim_job_results(all_vs, 4, WORLD_MPI_COMM)
-        #all_vs_1dim = []
-        #for i in range(math.ceil(4 / WORLD_MPI_SIZE)):
-        #    for j in range(WORLD_MPI_SIZE):
-        #        if i * WORLD_MPI_SIZE + j < 4:
-        #            all_vs_1dim.append(all_vs[j][i])
-        #        else:
-        #            break
-        #vs = all_vs_1dim
-        #del all_vs_1dim, all_vs
-
-        #WORLD_MPI_COMM.barrier()
-        #vs_gather_to_rank0 = WORLD_MPI_COMM.gather(vs, root=0)
-        #if WORLD_MPI_RANK == 0:
-        #    #for leg in range(4):
-        #    #    for ranki in range(WORLD_MPI_SIZE):
-        #    #        for rankj in range(ranki, WORLD_MPI_SIZE):
-        #    #            #print(f"comparing vs[{ranki}][{leg}] and vs[{rankj}][{leg}]")
-        #    #            assert cp.allclose(vs_gather_to_rank0[ranki][leg],
-        #    #                               vs_gather_to_rank0[rankj][leg])
-        #    for ranki in range(WORLD_MPI_SIZE):
-        #        for rankj in range(ranki, WORLD_MPI_SIZE):
-        #            #print(f"comparing vs[{ranki}][{0}] and vs[{rankj}][{2}]")
-        #            #assert cp.allclose(vs_gather_to_rank0[ranki][0],
-        #            #                   vs_gather_to_rank0[rankj][2])
-        #            #print(f"comparing vs[{ranki}][{1}] and vs[{rankj}][{3}]")
-        #            #assert cp.allclose(vs_gather_to_rank0[ranki][1],
-        #            #                   vs_gather_to_rank0[rankj][3])
-        #            
-        #            print(f"comparing vs[{ranki}][{0}] and vs[{rankj}][{2}]")
-        #            print(cp.linalg.norm(vs_gather_to_rank0[ranki][0]-vs_gather_to_rank0[rankj][2]))
-        #            print(f"comparing vs[{ranki}][{1}] and vs[{rankj}][{3}]")
-        #            print(cp.linalg.norm(vs_gather_to_rank0[ranki][1]-vs_gather_to_rank0[rankj][3]))
-        #
-        #I02 = oe.contract("Ui,Uj->ij",vs[2], vs[0])
-        #I13 = oe.contract("Ui,Uj->ij",vs[3], vs[1])
-        #TrI02 = cp.trace(I02)
-        #normI02sqr = cp.linalg.norm(I02)**2
-        #TrI13 = cp.trace(I13)
-        #normI13sqr = cp.linalg.norm(I13)**2
-        #print(f"At rank {WORLD_MPI_RANK}. Tr(V_{{U,c0}}V_{{U,a0}})={TrI02}, norm(V_{{U,c0}}V_{{U,a0}})={normI02sqr},Tr(V_{{U,d0}}V_{{U,b0}})={TrI13}, norm(V_{{U,d0}}V_{{U,b0}})={normI13sqr}")
-
-
+        
         iteration = pure_gauge_slice(shape=(N, N, N, N), chunk=(N, chunk[0], chunk[1], chunk[2]))
         #Q0, Q1, Q2, Q3 = cp.conj(vs[0].T), cp.conj(vs[1].T), cp.conj(vs[2].T), cp.conj(vs[3].T)
         Q0, Q2 = cp.conj(vs[0].T), vs[2].T
@@ -209,20 +160,19 @@ class SU2_pure_gauge:
             i0, i1, i2, i3 = i
             if n % WORLD_MPI_SIZE == WORLD_MPI_RANK:
         
-                TrP = oe.contract("abi,bcj,dck,adl->ijkl", cp.conj(U[:,:,i0]), cp.conj(U[:,:,i1]), U[:,:,i2], U[:,:,i3])
+                #TrP = oe.contract("abi,bcj,dck,adl->ijkl", cp.conj(U[:,:,i0]), cp.conj(U[:,:,i1]), U[:,:,i2], U[:,:,i3])
+                TrP = oe.contract("dci,adj,abk,bcl->ijkl", cp.conj(U[:,:,i0]), cp.conj(U[:,:,i1]), U[:,:,i2], U[:,:,i3])
                 
-                if self.epsilon is not None:
-                    #P = oe.contract("abi,bcj,dck,edl->aeijkl", cp.conj(U[:,:,i0]), cp.conj(U[:,:,i1]), U[:,:,i2], U[:,:,i3])
-                    norm, idx = admissibility_condition(TrP, self.epsilon)
-                    A = (1 - 0.5*TrP.real) / (1 - norm / self.epsilon)
-                    A = cp.exp(-self.beta * A)
+                if self.ε is not None:
+                    norm, idx = admissibility_condition(TrP, self.ε)
+                    A = (1 - 0.5*TrP.real) / (1 - (norm / self.ε))
+                    A = cp.exp(-self.β * A)
                     A[idx] = 0.0
                 else:
-                    A = cp.exp(-self.beta * (1 - 0.5*TrP))
+                    A = cp.exp(-self.β * (1 - 0.5*TrP.real))
                 
                 A = oe.contract("i,j,k,l,i,j,k,l,ijkl->ijkl", cp.sqrt(w[i0]), cp.sqrt(w[i1]), cp.sqrt(w[i2]), cp.sqrt(w[i3]), 
                                                               cp.sqrt(J[i0]), cp.sqrt(J[i1]), cp.sqrt(J[i2]), cp.sqrt(J[i3]), A)
-                #A = oe.contract("k,l,k,l,ijkl->ijkl", w[i2], w[i3], J[i2], J[i3], A)
                 q0, q1, q2, q3 = Q0[:,i0], Q1[:,i1], Q2[:,i2], Q3[:,i3]
                 T_local += oe.contract("ABCD,xA,YB,XC,yD->xXyY", A, q0, q1, q2, q3)
         

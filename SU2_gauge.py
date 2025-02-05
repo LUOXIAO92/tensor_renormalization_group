@@ -11,7 +11,7 @@ pars.add_argument('--rgiter', default='XYXYXYXYXYXY')
 pars.add_argument('--L'     , default=None)
 pars.add_argument('--beta'  , default=3.0, type=float)
 pars.add_argument('--eps'   , default=0  , type=float)
-pars.add_argument('--init_tensor_chunk'  , default=(6,1,1))
+pars.add_argument('--init_tensor_chunk'  , default='(6,1,1)')
 
 pars.add_argument('--rgscheme'      , default='hotrg')
 pars.add_argument('--degeneracy_eps', default=0, type=float)
@@ -20,8 +20,8 @@ pars.add_argument('--gilt_eps', default=0, type=float)
 pars.add_argument('--Ngilt'   , default=1, type=int)
 pars.add_argument('--Ncutlegs', default=2, type=int)
 
-pars.add_argument('--reduced_matrix_chunk' , default=(4,4,4,4))
-pars.add_argument('--coarse_graining_chunk', default=(1,1,1))
+pars.add_argument('--reduced_matrix_chunk' , default='(32,32,1,1)')
+pars.add_argument('--coarse_graining_chunk', default='(1,1,1)')
 
 pars.add_argument('--out_dir'     , default='./')
 pars.add_argument('--verbose'     , default=True, type=bool)
@@ -90,12 +90,12 @@ if __name__ == "__main__":
                       comm         = WORLD_COMM)
     
     eps = None if eps == 0 else eps
-    su2_2dhotrg = SU2_2dHOTRG(info    = info,
-                              dim     = 2, 
-                              Ks      = Ks, 
-                              beta    = beta, 
-                              epsilon = eps, 
-                              χinit   = Dcut, 
+    su2_2dhotrg = SU2_2dHOTRG(info  = info,
+                              dim   = 2, 
+                              Ks    = Ks, 
+                              β     = beta, 
+                              ε     = eps, 
+                              χinit = Dcut, 
                               init_tensor_chunk = init_tensor_chunk, 
                               usegpu  = True)
     

@@ -4,6 +4,7 @@ import numpy as np
 import sys
 import time
 import math
+import copy
 
 from mpi4py import MPI
 
@@ -13,6 +14,7 @@ from itertools import product
 from .HOTRG import HOTRG_info as Info
 from .HOTRG import Tensor_HOTRG as Tensor
 from tools.linalg_tools import svd, eigh
+#from tools.aa import svd, eigh
 from tools.mpi_tools import contract_slice, gpu_syn, flatten_2dim_job_results, contract_slicer
 
 
@@ -40,13 +42,20 @@ def tranpose(where, T, do_what:str, direction:str, xp, comm:MPI.Intercomm):
             if direction == "Y" or direction == "y":
                 pass
             elif direction == "X" or direction == "x":
-                T = xp.transpose(axes=(2,3,0,1))
-
+                T = xp.transpose(T, axes=(2,3,0,1))
+            else:
+                raise ValueError(f"Invalid input direction:{direction}")
+        
         elif do_what == "restore":
             if direction == "Y" or direction == "y":
                 pass
             elif direction == "X" or direction == "x":
-                T = xp.transpose(axes=(2,3,0,1))
+                T = xp.transpose(T, axes=(2,3,0,1))
+            else:
+                raise ValueError(f"Invalid input direction:{direction}")
+            
+        else:
+            raise ValueError(f"Invalid input do_what:{do_what}")
 
     comm.barrier()
     return T
@@ -214,20 +223,20 @@ def squeezer(where, T0, T1, T2, T3,
                 LdagL = xp.reshape(LdagL,  (LdagL.shape[0]*LdagL.shape[1], LdagL.shape[2]*LdagL.shape[3]))
                 Eigvect1, Eigval1, _ = svd(LdagL, shape=[[0], [1]], k=min(*LdagL.shape), truncate_eps=truncate_eps)
                 if return_eigval:
-                    R = oe.contract("ia,a->ai", xp.conj(Eigvect1), xp.sqrt(Eigval1))
-                    return R, Eigval1
+                    R1 = oe.contract("ia,a->ai", xp.conj(Eigvect1), xp.sqrt(Eigval1))
+                    return R1, Eigval1
                 else:
-                    return R
+                    return R1
         
             elif qr == 'rq':
                 RRdag = oe.contract("iabe,jced,kabf,lcfd->ijkl", T3, T2, xp.conj(T3), xp.conj(T2))
                 RRdag = xp.reshape(RRdag,  (RRdag.shape[0]*RRdag.shape[1], RRdag.shape[2]*RRdag.shape[3]))
                 Eigvect2, Eigval2, _ = svd(RRdag, shape=[[0], [1]], k=min(*RRdag.shape), truncate_eps=truncate_eps)
                 if return_eigval:
-                    R = oe.contract("ia,a->ia", Eigvect2, xp.sqrt(Eigval2))
-                    return R, Eigval2
+                    R2 = oe.contract("ia,a->ia", Eigvect2, xp.sqrt(Eigval2))
+                    return R2, Eigval2
                 else:
-                    return R
+                    return R2
 
         else:
             if return_eigval:
@@ -235,20 +244,17 @@ def squeezer(where, T0, T1, T2, T3,
             else:
                 return None
 
-
     R1, Eigval1 = cal_R(truncate_eps, qr='qr', return_eigval=True)
     R2, Eigval2 = cal_R(truncate_eps, qr='rq', return_eigval=True)
     gpu_syn(usegpu)
     comm.barrier()
     
     if MPI_RANK == where:
-        #U, S, VH = cp.linalg.svd(R1@R2)
         R1R2 = R1@R2
         k = min(*R1R2.shape, Dcut)
         U, S, VH = svd(R1R2, shape=[[0], [1]], k=k, truncate_eps=truncate_eps)
         UH = xp.conj(U.T)
         Sinv = 1 / S
-        #Sinv = Sinv.astype(cp.complex128)
         V = xp.conj(VH.T)
 
         print("eL",Eigval1[:k])
@@ -272,10 +278,12 @@ def squeezer(where, T0, T1, T2, T3,
             filename = output_dir + f'/squeezer_n{nrgsteps}.dat'
             if not os.path.exists(output_dir):
                 os.mkdir(output_dir)
-            if nrgsteps == 0:
+            if nrgsteps == 1:
                 mode = 'w'
-            else:
+            elif nrgsteps > 1:
                 mode = 'a'
+            else:
+                raise ValueError(f"Invalid input nrgsteps:{nrgsteps}, must larger equal than 1")
             
             with open(filename, mode) as out:
                 E10, E20 = xp.max(Eigval1), xp.max(Eigval2)
@@ -286,6 +294,8 @@ def squeezer(where, T0, T1, T2, T3,
                     out.write(f'{e1:.12e} {e2:.12e}\n')
 
     else:
+        R1, R2 = None, None
+        Eigval1, Eigval2 = None, None
         P1 = None
         P2 = None
     del R1, R2, Eigval1, Eigval2
@@ -336,13 +346,14 @@ def coarse_graining(where, T0, T1, PLD, PRU, xp, comm:MPI.Intercomm, chunk=None|
 
     path = [(0, 2), (0, 1), (0, 1)]
     subscripts = "acke,bdel,iab,cdj->ijkl"
-    local_T = xp.zeros(shape=(χ_i, χ_j, χ_k, χ_l), dtype=dtype)
+    
 
     gpu_syn(usegpu)
     comm.barrier()
     t0  = time.time()
     t00 = time.time()
 
+    local_T = xp.zeros(shape=(χ_i, χ_j, χ_k, χ_l), dtype=dtype)
     contract_iter = contract_slicer(shape=(χ_a, χ_d, χ_e), chunk=chunk, comm=comm)
     for n, legs in enumerate(contract_iter):
         a, d, e = legs
@@ -353,7 +364,7 @@ def coarse_graining(where, T0, T1, PLD, PRU, xp, comm:MPI.Intercomm, chunk=None|
                 comm.send(obj=oprands, dest=dest_rank, tag=dest_rank)
             else:
                 local_T += oe.contract(subscripts, *oprands, optimize=path)
-
+    
         elif (MPI_RANK != where) and (MPI_RANK == dest_rank):
             oprands = comm.recv(source=where, tag=MPI_RANK)
             local_T += oe.contract(subscripts, *oprands, optimize=path)
@@ -365,8 +376,9 @@ def coarse_graining(where, T0, T1, PLD, PRU, xp, comm:MPI.Intercomm, chunk=None|
                 t0 = time.time()
             elif (MPI_RANK == 0) and (n == 0):
                 print(f"Start coarse graining.")
-
+    
     T = comm.reduce(sendobj=local_T, op=MPI.SUM, root=where)
+
     gpu_syn(usegpu)
     comm.barrier()
     t11 = time.time()
@@ -413,8 +425,8 @@ def new_pure_tensor(info:Info,
     gpu_syn(T.usegpu)
     comm.barrier()
 
-    T0 = tranpose(where, T0, 'transpose', xp, direction, comm)
-    T1 = tranpose(where, T1, 'transpose', xp, direction, comm)
+    T0 = tranpose(where, T0, 'transpose', direction, xp, comm)
+    T1 = tranpose(where, T1, 'transpose', direction, xp, comm)
     gpu_syn(usegpu)
     comm.barrier()
 
@@ -427,6 +439,7 @@ def new_pure_tensor(info:Info,
                         verbose, 
                         save_details, 
                         outdir)
+
     gpu_syn(usegpu)
     comm.barrier()
 
@@ -438,7 +451,7 @@ def new_pure_tensor(info:Info,
 
     del PLD, PRU, T0, T1
 
-    T.T = tranpose(where, T.T, "restore", xp, direction, comm)
+    T.T = tranpose(where, T.T, "restore", direction, xp, comm)
     gpu_syn(usegpu)
     comm.barrier()
     
@@ -758,7 +771,7 @@ def gilt_plaq(where, T0, T1,
         for leg in cycle(legs):
             T0_shape0, T1_shape0 = T0.shape, T1.shape
             t0 = time.time()
-            T0.T, T1.T, err, done, count = gilt_plaq_routine(T0, T1, gilt_eps=gilt_eps, leg=leg, direction=direction, usegpu=usegpu)
+            T0, T1, err, done, count = gilt_plaq_routine(T0, T1, gilt_eps=gilt_eps, leg=leg, direction=direction, usegpu=usegpu)
             t1 = time.time()
             T0_shape1, T1_shape1 = T0.shape, T1.shape
             gilt_err += err
@@ -774,3 +787,4 @@ def gilt_plaq(where, T0, T1,
     return T0, T1
 
 #gilt hotrg end---------------------------------------------------------------------------
+
