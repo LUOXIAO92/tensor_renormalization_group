@@ -14,7 +14,6 @@ from itertools import product
 from .HOTRG import HOTRG_info as Info
 from .HOTRG import Tensor_HOTRG as Tensor
 from tools.linalg_tools import svd, eigh
-#from tools.aa import svd, eigh
 from tools.mpi_tools import contract_slice, gpu_syn, flatten_2dim_job_results, contract_slicer
 
 
