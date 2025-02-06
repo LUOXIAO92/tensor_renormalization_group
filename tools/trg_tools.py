@@ -269,9 +269,17 @@ def env_tensor_for_3d_SU2_pure_gauge(A, direction:str, comm:MPI.Intercomm, use_g
         #Env_{T'02 T'12, T02 T12} = (QR)†QR = R†Q†QR = R†R = UΛU† → R = sqrt(Λ)U†)
         #job_list = [A0†A0, B01†B01, A1†A1, A2†A2]
         subscript_list = ["afgh,AFgh->afAF", "ibaj,iBAj->baBA", "kcbl,kCBl->cbCB", "dnoe,DnoE->deDE"]
-        operand_list = [[xp.conj(A), A], [xp.conj(B), B], [xp.conj(A), A], [xp.conj(A), A]]
+
+        if WORLD_MPI_RANK == 0:
+            operand_list = [[xp.conj(A), A], [xp.conj(B), B], [xp.conj(A), A], [xp.conj(A), A]]
+        else:
+            operand_list = None
         AA, BB, CC, DD = env_tensor_components(subscript_list, operand_list)
-        EE, FF, GG, HH = xp.conj(B), B, xp.conj(B), B
+        
+        if WORLD_MPI_RANK == 0:
+            EE, FF, GG, HH = xp.conj(B), B, xp.conj(B), B
+        else:
+            EE, FF, GG, HH = None, None, None, None
         #gpu_syn(use_gpu)
         #comm.barrier()
         subscript_left = ""
@@ -281,9 +289,17 @@ def env_tensor_for_3d_SU2_pure_gauge(A, direction:str, comm:MPI.Intercomm, use_g
         #Env_{d0 d1 d'0 d'1} = RQ(RQ)† = RQQ†R† = RR† = UΛU† → R = Usqrt(Λ)
         #job_list = [B01B01†, B12B12†, A2A2†, B02B02†]
         subscript_list = ["hbai,hBAi->baBA", "kldc,klDC->dcDC", "dmne,DmnE->deDE", "eopf,EopF->efEF"]
-        operand_list = [[xp.conj(B), B], [xp.conj(B), B], [xp.conj(A), A], [xp.conj(B), B]]
+
+        if WORLD_MPI_RANK == 0:
+            operand_list = [[xp.conj(B), B], [xp.conj(B), B], [xp.conj(A), A], [xp.conj(B), B]]
+        else:
+            operand_list = None
         II, JJ, KK, LL = env_tensor_components(subscript_list, operand_list)
-        MM, OO, PP, QQ = A, xp.conj(A), A, xp.conj(A)
+
+        if WORLD_MPI_RANK == 0:
+            MM, OO, PP, QQ = A, xp.conj(A), A, xp.conj(A)
+        else:
+            EE, FF, GG, HH = None, None, None, None
         subscript_right = ""
         #QR right---------------------------------------------------------------------------
 
