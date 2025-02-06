@@ -303,7 +303,7 @@ def squeezer(where, T0, T1, T2, T3,
 
     return P2, P1
 
-def coarse_graining(where, T0, T1, PLD, PRU, xp, comm:MPI.Intercomm, chunk=None|tuple, usegpu=False, verbose=False):
+def coarse_graining(where, T0, T1, PLD, PRU, xp, comm:MPI.Intercomm, chunk=None|tuple, usegpu=False, verbose=False, low_communicational_cost=False):
     """
     >>> T0_{acke}, T1_{bedl}, PLD_{iab}, PRU_{cdj}
     >>>            l
@@ -346,40 +346,62 @@ def coarse_graining(where, T0, T1, PLD, PRU, xp, comm:MPI.Intercomm, chunk=None|
     path = [(0, 2), (0, 1), (0, 1)]
     subscripts = "acke,bdel,iab,cdj->ijkl"
     
-
     gpu_syn(usegpu)
     comm.barrier()
     t0  = time.time()
     t00 = time.time()
 
+
     local_T = xp.zeros(shape=(χ_i, χ_j, χ_k, χ_l), dtype=dtype)
     contract_iter = contract_slicer(shape=(χ_a, χ_d, χ_e), chunk=chunk, comm=comm)
-    for n, legs in enumerate(contract_iter):
-        a, d, e = legs
-        dest_rank = n % MPI_SIZE
-        
-        operands = None
-        if MPI_RANK == where:
-            sendoprands = [T0[a,:,:,e], T1[:,d,e,:], PLD[:,a,:], PRU[:,d,:]]
-            if MPI_RANK != dest_rank:
-                comm.send(obj=sendoprands, dest=dest_rank, tag=dest_rank)
-            else:
-                operands = sendoprands
-        else:
-            if MPI_RANK == dest_rank:
-                operands = comm.recv(source=where, tag=MPI_RANK)
 
-        if MPI_RANK == dest_rank:
-            local_T += oe.contract(subscripts, *operands, optimize=path)
+    if low_communicational_cost:
+        T0 = comm.bcast(T0, where)
+        T1 = comm.bcast(T1, where)
+        PLD = comm.bcast(PLD, where)
+        PRU = comm.bcast(PRU, where)
+
+        for n, legs in enumerate(contract_iter):
+            a, d, e = legs
+
+            if n % MPI_SIZE == MPI_RANK:
+                local_T += oe.contract(subscripts, T0[a,:,:,e], T1[:,d,e,:], PLD[:,a,:], PRU[:,d,:], optimize=path)
+
+            if verbose:
+                if (MPI_RANK == 0) and (n % 8 == 0) and (n > 0):
+                    t1 = time.time()
+                    print(f"Local iteration:{n}, time= {t1-t0:.2e} s")
+                    t0 = time.time()
+                elif (MPI_RANK == 0) and (n == 0):
+                    print(f"Start coarse graining.")
+
+    else:
+        for n, legs in enumerate(contract_iter):
+            a, d, e = legs
+            dest_rank = n % MPI_SIZE
+            
+            operands = None
+            if MPI_RANK == where:
+                sendoprands = [T0[a,:,:,e], T1[:,d,e,:], PLD[:,a,:], PRU[:,d,:]]
+                if MPI_RANK != dest_rank:
+                    comm.send(obj=sendoprands, dest=dest_rank, tag=dest_rank)
+                else:
+                    operands = sendoprands
+            else:
+                if MPI_RANK == dest_rank:
+                    operands = comm.recv(source=where, tag=MPI_RANK)
         
-        if verbose:
-            if (MPI_RANK == 0) and (n % 8 == 0) and (n > 0):
-                t1 = time.time()
-                print(f"Local iteration:{n}, time= {t1-t0:.2e} s")
-                t0 = time.time()
-            elif (MPI_RANK == 0) and (n == 0):
-                print(f"Start coarse graining.")
-    
+            if MPI_RANK == dest_rank:
+                local_T += oe.contract(subscripts, *operands, optimize=path)
+            
+            if verbose:
+                if (MPI_RANK == 0) and (n % 8 == 0) and (n > 0):
+                    t1 = time.time()
+                    print(f"Local iteration:{n}, time= {t1-t0:.2e} s")
+                    t0 = time.time()
+                elif (MPI_RANK == 0) and (n == 0):
+                    print(f"Start coarse graining.")
+
     T = comm.reduce(sendobj=local_T, op=MPI.SUM, root=where)
 
     gpu_syn(usegpu)
