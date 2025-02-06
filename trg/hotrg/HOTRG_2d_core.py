@@ -357,16 +357,20 @@ def coarse_graining(where, T0, T1, PLD, PRU, xp, comm:MPI.Intercomm, chunk=None|
     for n, legs in enumerate(contract_iter):
         a, d, e = legs
         dest_rank = n % MPI_SIZE
+        
+        operands = None
         if MPI_RANK == where:
-            oprands = [T0[a,:,:,e], T1[:,d,e,:], PLD[:,a,:], PRU[:,d,:]]
+            sendoprands = [T0[a,:,:,e], T1[:,d,e,:], PLD[:,a,:], PRU[:,d,:]]
             if MPI_RANK != dest_rank:
-                comm.send(obj=oprands, dest=dest_rank, tag=dest_rank)
+                comm.send(obj=sendoprands, dest=dest_rank, tag=dest_rank)
             else:
-                local_T += oe.contract(subscripts, *oprands, optimize=path)
-    
-        elif (MPI_RANK != where) and (MPI_RANK == dest_rank):
-            oprands = comm.recv(source=where, tag=MPI_RANK)
-            local_T += oe.contract(subscripts, *oprands, optimize=path)
+                operands = sendoprands
+        else:
+            if MPI_RANK == dest_rank:
+                operands = comm.recv(source=where, tag=MPI_RANK)
+
+        if MPI_RANK == dest_rank:
+            local_T += oe.contract(subscripts, *operands, optimize=path)
         
         if verbose:
             if (MPI_RANK == 0) and (n % 8 == 0) and (n > 0):

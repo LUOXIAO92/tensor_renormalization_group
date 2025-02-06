@@ -21,7 +21,7 @@ mkdir -p $output_dir
 
 echo "start job"
 
-mpiexec -np 1 python -u ./SU2_gauge.py \
+mpiexec -np 4 python -u ./SU2_gauge.py \
     --dcut ${Dcut} \
     --K "(${K}, ${K}, ${K})" \
     --L "(${Lx}, ${Ly})" \

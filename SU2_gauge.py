@@ -2,6 +2,7 @@ from mpi4py import MPI
 import argparse
 import ast
 import sys
+import time
 from tools.mpi_tools import use_gpu
 
 pars = argparse.ArgumentParser()
@@ -99,4 +100,9 @@ if __name__ == "__main__":
                               init_tensor_chunk = init_tensor_chunk, 
                               usegpu  = True)
     
+    t0 = time.time()
     lnZoV = su2_2dhotrg.cal_free_energy()
+    t1 = time.time()
+
+    if WORLD_RANK == 0:
+        print(f"beta={beta}, eps={eps}, lnZ/V={lnZoV}, time={t1-t0:.2e}s")

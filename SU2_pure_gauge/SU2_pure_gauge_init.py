@@ -60,14 +60,14 @@ class SU2_pure_gauge:
 
         assert len(chunk) == 3, "length of `chunk` must be 3"
         
-        WORLD_MPI_COMM.Barrier()
+        WORLD_MPI_COMM.barrier()
         iteration = [
                      pure_gauge_slice(shape=(N, N, N, N), chunk=(N, chunk[0], chunk[1], chunk[2])),
                      pure_gauge_slice(shape=(N, N, N, N), chunk=(chunk[0], N, chunk[1], chunk[2])),
                      pure_gauge_slice(shape=(N, N, N, N), chunk=(chunk[0], chunk[1], N, chunk[2])),
                      pure_gauge_slice(shape=(N, N, N, N), chunk=(chunk[0], chunk[1], chunk[2], N)),
                      ]
-        WORLD_MPI_COMM.Barrier()
+        WORLD_MPI_COMM.barrier()
 
 
         #compute hosvd A_{U0, U1, U2, U3} = s_{a, b, c, d} V_{U0, a} V_{U1, b} V_{U2, c} V_{U3, d}
@@ -75,13 +75,13 @@ class SU2_pure_gauge:
         M_list = []
         for i in range(4):
             if i <= legs_to_hosvd[-1]:
-                WORLD_MPI_COMM.Barrier()
+                WORLD_MPI_COMM.barrier()
                 gpu_syn(self.use_gpu)
                 leg_hosvd = legs_to_hosvd[i]
                 M_tmp = plaquette_contraction_for_hosvd(self.β, self.ε, U, w, J, leg_hosvd, iteration[leg_hosvd], 
                                                         self.comm, use_gpu=self.use_gpu, verbose=True)
                 M_list.append(M_tmp)
-                WORLD_MPI_COMM.Barrier()
+                WORLD_MPI_COMM.barrier()
                 if WORLD_MPI_RANK == 0:
                     print(f"Calculation of leg U{i} finished.")
                 del M_tmp
@@ -89,7 +89,7 @@ class SU2_pure_gauge:
                 M_list.append(M_list[i % len_legs_to_hosvd])
                 
 
-        WORLD_MPI_COMM.Barrier()
+        WORLD_MPI_COMM.barrier()
         if WORLD_MPI_RANK == 0:
             M =[]
             for rank in range(WORLD_MPI_SIZE):
@@ -106,24 +106,24 @@ class SU2_pure_gauge:
         else:
             gpu_syn(self.use_gpu)
             M = WORLD_MPI_COMM.recv(source=0, tag=WORLD_MPI_RANK)
-        WORLD_MPI_COMM.Barrier()
+        WORLD_MPI_COMM.barrier()
 
 
-        WORLD_MPI_COMM.Barrier()
+        WORLD_MPI_COMM.barrier()
         gpu_syn(self.use_gpu)
         eigvals, vs = [], []
         for m in M:
             e, v = eigh(m, shape=[[0], [1]], k=chi, truncate_eps=1e-10, degeneracy_eps=1e-5)
             eigvals.append(e)
             vs.append(v)
-        WORLD_MPI_COMM.Barrier()
+        WORLD_MPI_COMM.barrier()
         
 
-        WORLD_MPI_COMM.Barrier()
+        WORLD_MPI_COMM.barrier()
         for i, e in enumerate(eigvals):
             leg = i*WORLD_MPI_SIZE + WORLD_MPI_RANK
             print(f"eigen values for {leg}th leg at rank{WORLD_MPI_RANK} are", e)
-        WORLD_MPI_COMM.Barrier()
+        WORLD_MPI_COMM.barrier()
 
         #Tensor A_{U0, U1, U2, U3} = s_{a, b, c, d} V_{U0, a} V_{U1, b} V_{U2, c} V_{U3, d}
 
@@ -183,13 +183,15 @@ class SU2_pure_gauge:
                     t0 = time.time() if WORLD_MPI_RANK == 0 else None
         
         T = WORLD_MPI_COMM.reduce(sendobj=T_local, op=MPI.SUM, root=0)
-        #cp.cuda.get_current_stream().synchronize()
-        WORLD_MPI_COMM.Barrier()
+        gpu_syn(self.use_gpu)
+        WORLD_MPI_COMM.barrier()
 
         return T
     
 
-    def atrg_tensor(self):
-        dim = self.dim
+    def atrg_tensor(self, chi:int, chunk:tuple, legs_to_hosvd:list):
+        pass
+
+
 
     

@@ -135,8 +135,8 @@ def plaquette_contraction_for_hosvd(β:float, ε:float|None, U, w, J, leg_hosvd,
     #WORLD_MPI_COMM.barrier()
     #if use_gpu:
     #    cp.cuda.get_current_stream().synchronize()
-    t0 = time.time() if WORLD_MPI_RANK == 0 else None
-    t00 = time.time() if WORLD_MPI_RANK == 0 else None
+    t0 = time.time()
+    t00 = time.time()
     for n, i in enumerate(iteration):
         i0, i1, i2, i3 = i
         if n % WORLD_MPI_SIZE == WORLD_MPI_RANK:
@@ -164,7 +164,7 @@ def plaquette_contraction_for_hosvd(β:float, ε:float|None, U, w, J, leg_hosvd,
                     print(f"Global iters:{n}. Local iters:{n // WORLD_MPI_SIZE}. {(t1-t0) / (n // WORLD_MPI_SIZE):.2e} sec/local_iter") #. Size of A: {A.nbytes/(1024**3):.2e} Gbytes")
                     t0 = time.time() if WORLD_MPI_RANK == 0 else None
 
-    t11 = time.time() if WORLD_MPI_RANK == 0 else None
+    t11 = time.time()
     if WORLD_MPI_RANK == 0:
         print(f"Tot iteration {n+1}. Time= {t11-t00:.2e} s")
 
@@ -189,29 +189,75 @@ def env_tensor_for_3d_SU2_pure_gauge(A, direction:str, comm:MPI.Intercomm, use_g
             for j in range(i, A.ndim):
                 assert A.shape[i] == A.shape[j], "A must have the same bond dimension of 4 legs"
         
-    A = comm.bcast(obj=A, root=0)
+    #A = comm.bcast(obj=A, root=0)
     
-    Dcut = A.shape[0]
-    I = xp.diag([1 for _ in range(Dcut)])
-    B = oe.contract("Ωi,Ωj,Ωk,Ωl->ijkl", I, I, I, I)
+    if WORLD_MPI_RANK == 0:
+        Dcut = A.shape[0]
+        I = xp.diag([1 for _ in range(Dcut)])
+        B = oe.contract("Ωi,Ωj,Ωk,Ωl->ijkl", I, I, I, I)
+    else:
+        Dcut = None
+        I, B = None, None
     del I
+    Dcut = comm.bcast(obj=Dcut, root=0)
 
 
     def env_tensor_components(subscript_list:list, operand_list:list):
-        job_list = []
+        #job_list = []
+        #for job_id in range(4):
+        #    dest = job_id % WORLD_MPI_SIZE
+        #    if job_id % WORLD_MPI_SIZE == WORLD_MPI_RANK:
+        #        contract = oe.contract(subscript_list[job_id], *operand_list[job_id])
+        #        job_list.append(contract)
+        #job_list = comm.gather(sendobj=job_list, root=0)
+        #
+        #if WORLD_MPI_RANK == 0:
+        #    Envs = flatten_2dim_job_results(job_list, 4, comm)
+        #else:
+        #    Envs = None
+        #Envs = comm.bcast(obj=Envs, root=0)
+        #del job_list
+
+        results = []
         for job_id in range(4):
-            if job_id % WORLD_MPI_SIZE == WORLD_MPI_RANK:
-                contract = oe.contract(subscript_list[job_id], *operand_list[job_id])
-                job_list.append(contract)
-        job_list = comm.gather(sendobj=job_list, root=0)
-        
+
+            #Map job_id-th job to dest_rank
+            dest_rank  = job_id % WORLD_MPI_SIZE
+
+            #Prepare the jobs on rank 0
+            if WORLD_MPI_RANK == 0:
+                subscripts = subscript_list[job_id]
+                operands   = operand_list[job_id]
+                job = [subscripts, operands]
+                
+                #If this-rank(rank 0) is not dest rank, send job, else calculate the contraction.
+                if WORLD_MPI_RANK != dest_rank:
+                    comm.send(sendjob=job, dest=dest_rank, tag=dest_rank)
+                else:
+                    results.append(
+                        oe.contract(subscripts, *operands)
+                    )
+
+            #Recive job from rank 0 can calculate the contraction
+            else:
+                job = comm.recv(source=0, tag=WORLD_MPI_RANK)
+                subscripts, operands = job
+                results.append(
+                    oe.contract(subscripts, *operands)
+                )
+
+        gpu_syn(use_gpu)
+        comm.barrier()
+
+        results = comm.gather(sendobj=results, root=0)
         if WORLD_MPI_RANK == 0:
-            Envs = flatten_2dim_job_results(job_list, 4, comm)
+            Envs = flatten_2dim_job_results(results, job_size=4, comm=comm)
         else:
             Envs = None
-        Envs = comm.bcast(obj=Envs, root=0)
-        del job_list
-        
+        del results
+        gpu_syn(use_gpu)
+        comm.barrier()
+
         return Envs
 
 
