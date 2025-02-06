@@ -228,19 +228,22 @@ def env_tensor_for_3d_SU2_pure_gauge(A, direction:str, comm:MPI.Intercomm, use_g
             if WORLD_MPI_RANK == 0:
                 subscripts = subscript_list[job_id]
                 operands   = operand_list[job_id]
-                job = [subscripts, operands]
+                sendjob = [subscripts, operands]
                 
-                #If this-rank(rank 0) is not dest rank, send job, else calculate the contraction.
                 if WORLD_MPI_RANK != dest_rank:
-                    comm.send(sendjob=job, dest=dest_rank, tag=dest_rank)
+                    comm.send(sendjob=sendjob, dest=dest_rank, tag=dest_rank)
                 else:
-                    results.append(
-                        oe.contract(subscripts, *operands)
-                    )
-
-            #Recive job from rank 0 can calculate the contraction
+                    job = sendjob
+                    
+            #Recive job from rank 0
             else:
                 job = comm.recv(source=0, tag=WORLD_MPI_RANK)
+                #subscripts, operands = job
+                #results.append(
+                #    oe.contract(subscripts, *operands)
+                #)
+
+            if WORLD_MPI_RANK == dest_rank:
                 subscripts, operands = job
                 results.append(
                     oe.contract(subscripts, *operands)
