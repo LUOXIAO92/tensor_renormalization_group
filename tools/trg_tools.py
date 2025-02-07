@@ -203,21 +203,7 @@ def env_tensor_for_3d_SU2_pure_gauge(A, direction:str, comm:MPI.Intercomm, use_g
 
 
     def env_tensor_components(subscript_list:list, operand_list:list):
-        #job_list = []
-        #for job_id in range(4):
-        #    dest = job_id % WORLD_MPI_SIZE
-        #    if job_id % WORLD_MPI_SIZE == WORLD_MPI_RANK:
-        #        contract = oe.contract(subscript_list[job_id], *operand_list[job_id])
-        #        job_list.append(contract)
-        #job_list = comm.gather(sendobj=job_list, root=0)
-        #
-        #if WORLD_MPI_RANK == 0:
-        #    Envs = flatten_2dim_job_results(job_list, 4, comm)
-        #else:
-        #    Envs = None
-        #Envs = comm.bcast(obj=Envs, root=0)
-        #del job_list
-
+        
         results = []
         for job_id in range(4):
 
@@ -238,10 +224,6 @@ def env_tensor_for_3d_SU2_pure_gauge(A, direction:str, comm:MPI.Intercomm, use_g
             #Recive job from rank 0
             else:
                 job = comm.recv(source=0, tag=WORLD_MPI_RANK)
-                #subscripts, operands = job
-                #results.append(
-                #    oe.contract(subscripts, *operands)
-                #)
 
             if WORLD_MPI_RANK == dest_rank:
                 subscripts, operands = job
@@ -264,12 +246,64 @@ def env_tensor_for_3d_SU2_pure_gauge(A, direction:str, comm:MPI.Intercomm, use_g
         return Envs
 
 
-    if direction == 't':
+    if direction == 'T' or direction == 't':
         #QR left----------------------------------------------------------------------------
         #Env_{T'02 T'12, T02 T12} = (QR)†QR = R†Q†QR = R†R = UΛU† → R = sqrt(Λ)U†)
         #job_list = [A0†A0, B01†B01, A1†A1, A2†A2]
-        subscript_list = ["afgh,AFgh->afAF", "ibaj,iBAj->baBA", "kcbl,kCBl->cbCB", "dnoe,DnoE->deDE"]
+        subscript_list = ["abgh,ABgh->abAB", "icaj,iCAj->caCA", "kdcl,kDCl->dcDC", "enof,EnoF->efEF"]
 
+        if WORLD_MPI_RANK == 0:
+            operand_list = [[xp.conj(A), A], [B, B], [xp.conj(A), A], [xp.conj(A), A]]
+        else:
+            operand_list = None
+        AA, BB, CC, DD = env_tensor_components(subscript_list, operand_list)
+        
+        if WORLD_MPI_RANK == 0:
+            C = DD
+            D = oe.contract("abAB,caCA,dcDC->bBdD", AA, BB, CC)
+        else:
+            C, D = None, None
+        del AA, BB, CC, DD, operand_list
+        
+        subscripts_left = "abAB,cCdD,biec,Bkec,fjad,flAD->ijkl"
+        operands_left = [C, D, B, B, B, B]
+        del B, C, D
+        gpu_syn(use_gpu)
+        comm.barrier()
+        #QR left----------------------------------------------------------------------------
+        
+        #QR right---------------------------------------------------------------------------
+        #Env_{d0 d1 d'0 d'1} = RQ(RQ)† = RQQ†R† = RR† = UΛU† → R = Usqrt(Λ)
+        #job_list = [B01B01†, B12B12†, A2A2†, B02B02†]
+        subscript_list = ["hcai,hCAi->caCA", "kled,klED->edED", "emnf,EmnF->efEF", "fopb,FopB->fbFB"]
+
+        if WORLD_MPI_RANK == 0:
+            operand_list = [[B, B], [B, B], [xp.conj(A), A], [B, B]]
+        else:
+            operand_list = None
+        AA, BB, CC, DD = env_tensor_components(subscript_list, operand_list)
+
+        if WORLD_MPI_RANK == 0:
+            C = AA
+            D = oe.contract("abAB,acAC,cdCD->bBdD", BB, CC, DD)
+        else:
+            C, D = None, None
+        del AA, BB, CC, DD, operand_list
+
+        subscript_right = "abAB,cCdD,bdei,BDek,fcaj,fCAl->ijkl"
+        operands_right = [C, D, A, xp.conj(A), A, xp.conj(A)]
+        del B, C, D
+        gpu_syn(use_gpu)
+        comm.barrier()
+        #QR right---------------------------------------------------------------------------
+
+
+    elif direction == 'X' or direction == 'x':
+        #QR left----------------------------------------------------------------------------
+        #Env_{T'02 T'12, T02 T12} = (QR)†QR = R†Q†QR = R†R = UΛU† → R = sqrt(Λ)U†)
+        #job_list = [A0†A0, B01†B01, A1†A1, A2†A2]
+        subscript_list = ["hcai,hCAi->caCA", "idck,iDCk->dcDC", "lmed,lmED->edED", "fopb,FopB->fbFB"]
+    
         if WORLD_MPI_RANK == 0:
             operand_list = [[xp.conj(A), A], [xp.conj(B), B], [xp.conj(A), A], [xp.conj(A), A]]
         else:
@@ -277,30 +311,94 @@ def env_tensor_for_3d_SU2_pure_gauge(A, direction:str, comm:MPI.Intercomm, use_g
         AA, BB, CC, DD = env_tensor_components(subscript_list, operand_list)
         
         if WORLD_MPI_RANK == 0:
-            EE, FF, GG, HH = xp.conj(B), B, xp.conj(B), B
+            C = DD
+            D = oe.contract("abAB,caCA,dcDC->bBdD", AA, BB, CC)
         else:
-            EE, FF, GG, HH = None, None, None, None
-        #gpu_syn(use_gpu)
-        #comm.barrier()
-        subscript_left = ""
+            C, D = None, None
+        del AA, BB, CC, DD, operand_list
+        
+        subscripts_left = "abAB,cCdD,biec,Bkec,fjad,flAD->ijkl"
+        operands_left = [C, D, B, B, B, B]
+        del B, C, D
+        gpu_syn(use_gpu)
+        comm.barrier()
         #QR left----------------------------------------------------------------------------
         
         #QR right---------------------------------------------------------------------------
         #Env_{d0 d1 d'0 d'1} = RQ(RQ)† = RQQ†R† = RR† = UΛU† → R = Usqrt(Λ)
         #job_list = [B01B01†, B12B12†, A2A2†, B02B02†]
         subscript_list = ["hbai,hBAi->baBA", "kldc,klDC->dcDC", "dmne,DmnE->deDE", "eopf,EopF->efEF"]
-
+    
         if WORLD_MPI_RANK == 0:
             operand_list = [[xp.conj(B), B], [xp.conj(B), B], [xp.conj(A), A], [xp.conj(B), B]]
         else:
             operand_list = None
-        II, JJ, KK, LL = env_tensor_components(subscript_list, operand_list)
+        AA, BB, CC, DD = env_tensor_components(subscript_list, operand_list)
+    
+        if WORLD_MPI_RANK == 0:
+            C = AA
+            D = oe.contract("acAC,abAB,bdBD->cCdD", BB, CC, DD)
+        else:
+            C, D = None, None
+        del AA, BB, CC, DD, operand_list
+    
+        subscript_right = "abAB,cCdD,bdei,BDek,fcaj,fCAl->ijkl"
+        operands_right = [C, D, A, xp.conj(A), A, xp.conj(A)]
+        del B, C, D
+        gpu_syn(use_gpu)
+        comm.barrier()
+        #QR right---------------------------------------------------------------------------
+
+
+    elif direction == 'Y' or direction == 'y':
+        #QR left----------------------------------------------------------------------------
+        #Env_{y'01 y'02, y01 y02} = (QR)†QR = R†Q†QR = R†R = UΛU† → R = sqrt(Λ)U†)
+        #job_list = [A0†A0, A1†A1, B12†B12, A2†A2]
+        subscript_list = ["abgh,ABgh->abAB", "jdck,jDCk->dcDC", "lmed,lmED->edED", "enof,EnoF->efEF"]
 
         if WORLD_MPI_RANK == 0:
-            MM, OO, PP, QQ = A, xp.conj(A), A, xp.conj(A)
+            operand_list = [[xp.conj(A), A], [xp.conj(A), A], [B, B], [xp.conj(A), A]]
         else:
-            EE, FF, GG, HH = None, None, None, None
-        subscript_right = ""
+            operand_list = None
+        AA, BB, CC, DD = env_tensor_components(subscript_list, operand_list)
+        
+        if WORLD_MPI_RANK == 0:
+            C = AA
+            D = oe.contract("abAB,caCA,cdCD->bBdD", BB, CC, DD)
+        else:
+            C, D = None, None
+        del AA, BB, CC, DD, operand_list
+        
+        subscripts_left = "abAB,cCdD,ecai,aCAk,dfjb,DflB->ijkl"
+        operands_left = [C, D, B, B, B, B]
+        del B, C, D
+        gpu_syn(use_gpu)
+        comm.barrier()
+        #QR left----------------------------------------------------------------------------
+        
+        #QR right---------------------------------------------------------------------------
+        #Env_{l1 u2, l'1 u'2} = RQ(RQ)† = RQQ†R† = RR† = UΛU† → R = Usqrt(Λ)
+        #job_list = [A0A0†, B01B01†, B12B12†, B02B02†]
+        subscript_list = ["abgh,ABgh->abAB", "icaj,iCAj->caCA", "lmed,lmED->edED", "fopb,FopB->fbFB"]
+
+        if WORLD_MPI_RANK == 0:
+            operand_list = [[xp.conj(A), A], [B, B], [B, B], [B, B]]
+        else:
+            operand_list = None
+        AA, BB, CC, DD = env_tensor_components(subscript_list, operand_list)
+
+        if WORLD_MPI_RANK == 0:
+            C = CC
+            D = oe.contract("abAB,cbCB,dcDC->aAdD", DD, AA, BB)
+        else:
+            C, D = None, None
+        del AA, BB, CC, DD, operand_list
+
+        subscript_right = "abAB,cCdD,idbe,kBDe,ajfc,AlfC->ijkl"
+        operands_right = [C, D, A, xp.conj(A), A, xp.conj(A)]
+        del B, C, D
+        gpu_syn(use_gpu)
+        comm.barrier()
         #QR right---------------------------------------------------------------------------
 
 
