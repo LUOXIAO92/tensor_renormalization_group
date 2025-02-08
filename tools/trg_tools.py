@@ -70,15 +70,6 @@ def SU2_matrix_Gauss_Legendre_quadrature(Kθ:int, Kα:int, Kβ:int, comm:MPI.Int
     
     return U, w, J, I
 
-#def norm_for_elements(x):
-#    if type(x) == np.ndarray:
-#        sqrt = np.sqrt
-#    else:
-#        import cupy as cp
-#        sqrt = cp.sqrt
-#
-#    norm = sqrt((x.real)**2 + (x.imag)**2)
-#    return norm
 
 def admissibility_condition(TrP, ε:float):
     """
@@ -98,19 +89,12 @@ def admissibility_condition(TrP, ε:float):
     -------
     """
     if type(TrP) == np.ndarray:
-        conj = np.conj
         sqrt = np.sqrt
         abs  = np.abs
-        linalgnorm = np.linalg.norm
-        xp = np
     else:
-        from cupy import conj, sqrt, abs
-        from cupy.linalg import norm as linalgnorm
-        import cupy as xp
+        from cupy import sqrt, abs
     
     norm = 4 - 2 * TrP.real
-    #norm = 2 - TrP.real
-    assert linalgnorm(norm.imag) < 1e-12, "2 - 2*Re(P00) - 2*Re(P11) + Tr(PP†) must be real!"
     norm = sqrt(abs(norm))
     index = norm > ε
     return norm, index
@@ -131,12 +115,14 @@ def plaquette_contraction_for_hosvd(β:float, ε:float|None, U, w, J, leg_hosvd,
     M_local = zeros(shape=(N, N), dtype=complex)
 
     subscripts = ["ijkl,Ijkl->iI", "ijkl,iJkl->jJ", "ijkl,ijKl->kK", "ijkl,ijkL->lL"]
+    
+    
+    gpu_syn(use_gpu)
+    WORLD_MPI_COMM.barrier()
 
-    #WORLD_MPI_COMM.barrier()
-    #if use_gpu:
-    #    cp.cuda.get_current_stream().synchronize()
     t0 = time.time()
     t00 = time.time()
+
     for n, i in enumerate(iteration):
         i0, i1, i2, i3 = i
         if n % WORLD_MPI_SIZE == WORLD_MPI_RANK:
@@ -168,8 +154,8 @@ def plaquette_contraction_for_hosvd(β:float, ε:float|None, U, w, J, leg_hosvd,
     if WORLD_MPI_RANK == 0:
         print(f"Tot iteration {n+1}. Time= {t11-t00:.2e} s")
 
-    gpu_syn(use_gpu)
     M = WORLD_MPI_COMM.reduce(sendobj=M_local, op=MPI.SUM, root=0)
+    gpu_syn(use_gpu)
     WORLD_MPI_COMM.barrier()
 
     return M
@@ -188,9 +174,7 @@ def env_tensor_for_3d_SU2_pure_gauge(A, direction:str, comm:MPI.Intercomm, use_g
         for i in range(A.ndim):
             for j in range(i, A.ndim):
                 assert A.shape[i] == A.shape[j], "A must have the same bond dimension of 4 legs"
-        
-    #A = comm.bcast(obj=A, root=0)
-    
+            
     if WORLD_MPI_RANK == 0:
         Dcut = A.shape[0]
         I = xp.diag([1 for _ in range(Dcut)])
@@ -265,7 +249,7 @@ def env_tensor_for_3d_SU2_pure_gauge(A, direction:str, comm:MPI.Intercomm, use_g
             C, D = None, None
         del AA, BB, CC, DD, operand_list
         
-        subscripts_left = "abAB,cCdD,biec,Bkec,fjad,flAD->ijkl"
+        subscripts_left = "abAB,cCdD,biec,BkeC,fjad,flAD->ijkl"
         operands_left = [C, D, B, B, B, B]
         del B, C, D
         gpu_syn(use_gpu)
@@ -300,12 +284,12 @@ def env_tensor_for_3d_SU2_pure_gauge(A, direction:str, comm:MPI.Intercomm, use_g
 
     elif direction == 'X' or direction == 'x':
         #QR left----------------------------------------------------------------------------
-        #Env_{T'02 T'12, T02 T12} = (QR)†QR = R†Q†QR = R†R = UΛU† → R = sqrt(Λ)U†)
-        #job_list = [A0†A0, B01†B01, A1†A1, A2†A2]
+        #Env_{r'0 r'2, r0 r2} = (QR)†QR = R†Q†QR = R†R = UΛU† → R = sqrt(Λ)U†)
+        #job_list = [B01B01†, A1A1†, B12B12†, B02B02†]
         subscript_list = ["hcai,hCAi->caCA", "idck,iDCk->dcDC", "lmed,lmED->edED", "fopb,FopB->fbFB"]
     
         if WORLD_MPI_RANK == 0:
-            operand_list = [[xp.conj(A), A], [xp.conj(B), B], [xp.conj(A), A], [xp.conj(A), A]]
+            operand_list = [[B, B], [xp.conj(A), A], [B, B], [B, B]]
         else:
             operand_list = None
         AA, BB, CC, DD = env_tensor_components(subscript_list, operand_list)
@@ -317,8 +301,8 @@ def env_tensor_for_3d_SU2_pure_gauge(A, direction:str, comm:MPI.Intercomm, use_g
             C, D = None, None
         del AA, BB, CC, DD, operand_list
         
-        subscripts_left = "abAB,cCdD,biec,Bkec,fjad,flAD->ijkl"
-        operands_left = [C, D, B, B, B, B]
+        subscripts_left = "abAB,cCdD,cbie,CBke,dfja,DflA->ijkl"
+        operands_left = [C, D, xp.conj(A), A, xp.conj(A), A]
         del B, C, D
         gpu_syn(use_gpu)
         comm.barrier()
@@ -326,24 +310,24 @@ def env_tensor_for_3d_SU2_pure_gauge(A, direction:str, comm:MPI.Intercomm, use_g
         
         #QR right---------------------------------------------------------------------------
         #Env_{d0 d1 d'0 d'1} = RQ(RQ)† = RQQ†R† = RR† = UΛU† → R = Usqrt(Λ)
-        #job_list = [B01B01†, B12B12†, A2A2†, B02B02†]
-        subscript_list = ["hbai,hBAi->baBA", "kldc,klDC->dcDC", "dmne,DmnE->deDE", "eopf,EopF->efEF"]
+        #job_list = [A0A0†, A1A1†, A2A2†, B02B02†]
+        subscript_list = ["abgh,ABgh->abAB", "jdck,jDCk->dcDC", "emnf,EmnF->efEF", "fopb,FopB->fbFB"]
     
         if WORLD_MPI_RANK == 0:
-            operand_list = [[xp.conj(B), B], [xp.conj(B), B], [xp.conj(A), A], [xp.conj(B), B]]
+            operand_list = [[xp.conj(A), A], [xp.conj(A), A], [xp.conj(A), A], [B, B]]
         else:
             operand_list = None
         AA, BB, CC, DD = env_tensor_components(subscript_list, operand_list)
     
         if WORLD_MPI_RANK == 0:
-            C = AA
-            D = oe.contract("acAC,abAB,bdBD->cCdD", BB, CC, DD)
+            C = BB
+            D = oe.contract("abAB,acAC,dcDC->aAdD", CC, DD, AA)
         else:
             C, D = None, None
         del AA, BB, CC, DD, operand_list
     
-        subscript_right = "abAB,cCdD,bdei,BDek,fcaj,fCAl->ijkl"
-        operands_right = [C, D, A, xp.conj(A), A, xp.conj(A)]
+        subscript_right = "abAB,cCdD,ibde,kBDe,jfca,lfCA->ijkl"
+        operands_right = [C, D, B, B, B, B]
         del B, C, D
         gpu_syn(use_gpu)
         comm.barrier()
