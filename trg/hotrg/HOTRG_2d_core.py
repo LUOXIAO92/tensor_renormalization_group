@@ -303,7 +303,7 @@ def squeezer(where, T0, T1, T2, T3,
 
     return P2, P1
 
-def coarse_graining(where, T0, T1, PLD, PRU, xp, comm:MPI.Intercomm, chunk=None|tuple, usegpu=False, verbose=False, low_communicational_cost=False):
+def coarse_graining(where, T0, T1, PLD, PRU, xp, comm:MPI.Intercomm, chunk=None|tuple, usegpu=False, verbose=False, low_communication_cost=False):
     """
     >>> T0_{acke}, T1_{bedl}, PLD_{iab}, PRU_{cdj}
     >>>            l
@@ -355,7 +355,7 @@ def coarse_graining(where, T0, T1, PLD, PRU, xp, comm:MPI.Intercomm, chunk=None|
     local_T = xp.zeros(shape=(χ_i, χ_j, χ_k, χ_l), dtype=dtype)
     contract_iter = contract_slicer(shape=(χ_a, χ_d, χ_e), chunk=chunk, comm=comm)
 
-    if low_communicational_cost:
+    if low_communication_cost:
         T0 = comm.bcast(T0, where)
         T1 = comm.bcast(T1, where)
         PLD = comm.bcast(PLD, where)

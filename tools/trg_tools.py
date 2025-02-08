@@ -3,6 +3,7 @@ import opt_einsum as oe
 import numpy as np
 import time
 import math
+import copy
 from itertools import product
 #import cupy as cp
 
@@ -161,7 +162,7 @@ def plaquette_contraction_for_hosvd(β:float, ε:float|None, U, w, J, leg_hosvd,
     return M
 
 
-def env_tensor_for_3d_SU2_pure_gauge(A, direction:str, comm:MPI.Intercomm, use_gpu=False):
+def env_tensor_for_3d_SU2_pure_gauge(A, direction:str, chunk:tuple, comm:MPI.Intercomm, use_gpu=False, low_communication_cost=False):
     WORLD_MPI_RANK = comm.Get_rank()
     WORLD_MPI_SIZE = comm.Get_size()
 
@@ -176,14 +177,15 @@ def env_tensor_for_3d_SU2_pure_gauge(A, direction:str, comm:MPI.Intercomm, use_g
                 assert A.shape[i] == A.shape[j], "A must have the same bond dimension of 4 legs"
             
     if WORLD_MPI_RANK == 0:
-        Dcut = A.shape[0]
-        I = xp.diag([1 for _ in range(Dcut)])
+        chi = A.shape[0]
+        I = xp.diag([1.0 for _ in range(chi)])
         B = oe.contract("Ωi,Ωj,Ωk,Ωl->ijkl", I, I, I, I)
+        B = B.astype(complex)
     else:
-        Dcut = None
+        chi = None
         I, B = None, None
     del I
-    Dcut = comm.bcast(obj=Dcut, root=0)
+    chi = comm.bcast(obj=chi, root=0)
 
 
     def env_tensor_components(subscript_list:list, operand_list:list):
@@ -229,7 +231,9 @@ def env_tensor_for_3d_SU2_pure_gauge(A, direction:str, comm:MPI.Intercomm, use_g
 
         return Envs
 
-
+    shape = (chi, chi, chi, chi)
+    slices = [[slice(j, min(shape[i], j+chunk[i])) for j in range(0, shape[i], chunk[i])] for i in range(4)]
+    noslice = [slice(0, chi)]
     if direction == 'T' or direction == 't':
         #QR left----------------------------------------------------------------------------
         #Env_{T'02 T'12, T02 T12} = (QR)†QR = R†Q†QR = R†R = UΛU† → R = sqrt(Λ)U†)
@@ -249,9 +253,16 @@ def env_tensor_for_3d_SU2_pure_gauge(A, direction:str, comm:MPI.Intercomm, use_g
             C, D = None, None
         del AA, BB, CC, DD, operand_list
         
+        legC = product(noslice, noslice, slices[0], slices[1])
+        legD = product(noslice, slices[2], noslice, slices[3])
+        leg0 = product(noslice, noslice, noslice, noslice)
+        leg1 = product(slices[1], noslice, noslice, slices[2])
+        leg2 = product(noslice, noslice, noslice, noslice)
+        leg3 = product(noslice, noslice, slices[0], slices[3])
+        iter_left = product(legC, legD, leg0, leg1, leg2, leg3)
         subscripts_left = "abAB,cCdD,biec,BkeC,fjad,flAD->ijkl"
         operands_left = [C, D, B, B, B, B]
-        del B, C, D
+        del B, C, D, legC, legD, leg0, leg1, leg2, leg3
         gpu_syn(use_gpu)
         comm.barrier()
         #QR left----------------------------------------------------------------------------
@@ -274,9 +285,16 @@ def env_tensor_for_3d_SU2_pure_gauge(A, direction:str, comm:MPI.Intercomm, use_g
             C, D = None, None
         del AA, BB, CC, DD, operand_list
 
+        legC = product(noslice, noslice, slices[0], slices[1])
+        legD = product(noslice, slices[2], noslice, slices[3])
+        leg0 = product(noslice, noslice, noslice, noslice)
+        leg1 = product(slices[1], slices[3], noslice, noslice)
+        leg2 = product(noslice, noslice, noslice, noslice)
+        leg3 = product(noslice, slices[2], slices[0], noslice)
+        iter_right = product(legC, legD, leg0, leg1, leg2, leg3)
         subscript_right = "abAB,cCdD,bdei,BDek,fcaj,fCAl->ijkl"
         operands_right = [C, D, A, xp.conj(A), A, xp.conj(A)]
-        del B, C, D
+        del B, C, D, legC, legD, leg0, leg1, leg2, leg3
         gpu_syn(use_gpu)
         comm.barrier()
         #QR right---------------------------------------------------------------------------
@@ -301,9 +319,16 @@ def env_tensor_for_3d_SU2_pure_gauge(A, direction:str, comm:MPI.Intercomm, use_g
             C, D = None, None
         del AA, BB, CC, DD, operand_list
         
+        legC = product(noslice, noslice, slices[0], slices[1])
+        legD = product(noslice, slices[2], noslice, slices[3])
+        leg0 = product(noslice, noslice, noslice, noslice)
+        leg1 = product(slices[2], slices[1], noslice, noslice)
+        leg2 = product(noslice, noslice, noslice, noslice)
+        leg3 = product(slices[3], noslice, noslice, slices[0])
+        iter_left = product(legC, legD, leg0, leg1, leg2, leg3)
         subscripts_left = "abAB,cCdD,cbie,CBke,dfja,DflA->ijkl"
         operands_left = [C, D, xp.conj(A), A, xp.conj(A), A]
-        del B, C, D
+        del B, C, D, legC, legD, leg0, leg1, leg2, leg3
         gpu_syn(use_gpu)
         comm.barrier()
         #QR left----------------------------------------------------------------------------
@@ -326,9 +351,16 @@ def env_tensor_for_3d_SU2_pure_gauge(A, direction:str, comm:MPI.Intercomm, use_g
             C, D = None, None
         del AA, BB, CC, DD, operand_list
     
+        legC = product(noslice, noslice, slices[0], slices[1])
+        legD = product(noslice, slices[2], noslice, slices[3])
+        leg0 = product(noslice, noslice, noslice, noslice)
+        leg1 = product(noslice, slices[1], slices[3], noslice)
+        leg2 = product(noslice, noslice, noslice, noslice)
+        leg3 = product(noslice, noslice, slices[2], slices[0])
+        iter_right = product(legC, legD, leg0, leg1, leg2, leg3)
         subscript_right = "abAB,cCdD,ibde,kBDe,jfca,lfCA->ijkl"
         operands_right = [C, D, B, B, B, B]
-        del B, C, D
+        del B, C, D, legC, legD, leg0, leg1, leg2, leg3
         gpu_syn(use_gpu)
         comm.barrier()
         #QR right---------------------------------------------------------------------------
@@ -353,6 +385,13 @@ def env_tensor_for_3d_SU2_pure_gauge(A, direction:str, comm:MPI.Intercomm, use_g
             C, D = None, None
         del AA, BB, CC, DD, operand_list
         
+        legC = product(noslice, noslice, slices[0], slices[1])
+        legD = product(noslice, slices[2], noslice, slices[3])
+        leg0 = product(noslice, noslice, noslice, noslice)
+        leg1 = product(noslice, slices[2], slices[0], noslice)
+        leg2 = product(noslice, noslice, noslice, noslice)
+        leg3 = product(slices[3], noslice, noslice, slices[1])
+        iter_left = product(legC, legD, leg0, leg1, leg2, leg3)
         subscripts_left = "abAB,cCdD,ecai,aCAk,dfjb,DflB->ijkl"
         operands_left = [C, D, B, B, B, B]
         del B, C, D
@@ -378,16 +417,57 @@ def env_tensor_for_3d_SU2_pure_gauge(A, direction:str, comm:MPI.Intercomm, use_g
             C, D = None, None
         del AA, BB, CC, DD, operand_list
 
+        legC = product(noslice, noslice, slices[0], slices[1])
+        legD = product(noslice, slices[2], noslice, slices[3])
+        leg0 = product(noslice, noslice, noslice, noslice)
+        leg1 = product(noslice, slices[1], slices[3], noslice)
+        leg2 = product(noslice, noslice, noslice, noslice)
+        leg3 = product(slices[0], noslice, noslice, slices[2])
+        iter_right = product(legC, legD, leg0, leg1, leg2, leg3)
         subscript_right = "abAB,cCdD,idbe,kBDe,ajfc,AlfC->ijkl"
         operands_right = [C, D, A, xp.conj(A), A, xp.conj(A)]
-        del B, C, D
+        del B, C, D, legC, legD, leg0, leg1, leg2, leg3
         gpu_syn(use_gpu)
         comm.barrier()
         #QR right---------------------------------------------------------------------------
 
 
-    #local_M_left = xp.zeros(shape=(Dcut, Dcut, Dcut, Dcut), dtype=complex)
-    #for n, 
+    if WORLD_MPI_RANK == 0:
+        iter_left_  = copy.copy(iter_left)
+        for n, (legc, legd, leg0, leg1, leg2, leg3) in enumerate(iter_left_):
+            if n == 0:
+                path_left, _ = oe.contract_path(subscripts_left, 
+                                                operands_left[0][legc], 
+                                                operands_left[1][legd],
+                                                operands_left[2][leg0],
+                                                operands_left[3][leg1],
+                                                operands_left[4][leg2],
+                                                operands_left[5][leg3],
+                                                optimize='optimal')
+                break
+
+        iter_right_ = copy.copy(iter_right)
+        for n, (legc, legd, leg0, leg1, leg2, leg3) in enumerate(iter_right_):
+            if n == 0:
+                path_right, _ = oe.contract_path(subscript_right, 
+                                                 operands_right[0][legc], 
+                                                 operands_right[1][legd],
+                                                 operands_right[2][leg0],
+                                                 operands_right[3][leg1],
+                                                 operands_right[4][leg2],
+                                                 operands_right[5][leg3],
+                                                 optimize='optimal')
+                break
+        
+        del iter_left_, iter_right_
+    else:
+        path_left  = None
+        path_right = None
+    
+    path_left  = comm.bcast(path_left , root=0)
+    path_right = comm.bcast(path_right, root=0)
+
+
 
         
 def rsvd_for_3d_SU2_pure_gauge_initial_tensor(A, k:int, comm:MPI.Intercomm, seed=None):
