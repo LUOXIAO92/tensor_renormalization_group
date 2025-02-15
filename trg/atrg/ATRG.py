@@ -2,6 +2,43 @@ from mpi4py import MPI
 import opt_einsum as oe
 from tools.mpi_tools import gpu_syn
 
+class ATRG_info:
+    def __init__(self,
+                 Dcut:int,
+                 rgiter:str|list,
+                 truncate_eps:float,
+                 degeneracy_eps:float, 
+                 gilt_eps:float, 
+                 Ngilt:int, 
+                 Ncutlegs:int,
+                 reduced_matrix_chunk:tuple, 
+                 coarse_graining_chunk:tuple,
+                 verbose:bool,
+                 save_details:bool, 
+                 outdir:str,
+                 comm:MPI.Intercomm):
+        
+        #Chunking information
+        self.reduced_matrix_chunk  = reduced_matrix_chunk
+        self.coarse_graining_chunk = coarse_graining_chunk
+
+        #Tolerance
+        self.truncate_eps   = truncate_eps
+        self.degeneracy_eps = degeneracy_eps
+
+        #ATRG runtime info
+        self.Dcut         = Dcut
+        self.rgiter       = rgiter
+        self.gilt_eps     = gilt_eps
+        self.Ngilt        = Ngilt
+        self.Ncutlegs     = Ncutlegs
+        self.save_details = save_details
+        self.verbose      = verbose
+        self.outdir       = outdir
+
+        #MPI commucator
+        self.comm = comm
+
 class Tensor_ATRG:
     """
     This class is for atrg tensor.
@@ -167,3 +204,12 @@ class Tensor_ATRG:
         self.factor[sum(self.rgstep.values())] = c
         
         return self, c
+    
+
+class ATRG_3d:
+    
+    def __init__(self, info:ATRG_info):
+        self.info = info
+        self.comm = info.comm
+        self.rank = self.comm.Get_rank()
+        self.size = self.comm.Get_size()

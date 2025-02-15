@@ -215,34 +215,6 @@ def squeezer(where, T0, T1, T2, T3,
         else:
             return R
     
-    def cal_R2(truncate_eps=0, qr='qr', return_eigval=False):
-        if MPI_RANK == where:
-            if qr == 'qr':
-                LdagL = oe.contract("aibe,cjed,akbf,clfd->ijkl", xp.conj(T0), xp.conj(T1), T0, T1)
-                LdagL = xp.reshape(LdagL,  (LdagL.shape[0]*LdagL.shape[1], LdagL.shape[2]*LdagL.shape[3]))
-                Eigvect1, Eigval1, _ = svd(LdagL, shape=[[0], [1]], k=min(*LdagL.shape), truncate_eps=truncate_eps)
-                if return_eigval:
-                    R1 = oe.contract("ia,a->ai", xp.conj(Eigvect1), xp.sqrt(Eigval1))
-                    return R1, Eigval1
-                else:
-                    return R1
-        
-            elif qr == 'rq':
-                RRdag = oe.contract("iabe,jced,kabf,lcfd->ijkl", T3, T2, xp.conj(T3), xp.conj(T2))
-                RRdag = xp.reshape(RRdag,  (RRdag.shape[0]*RRdag.shape[1], RRdag.shape[2]*RRdag.shape[3]))
-                Eigvect2, Eigval2, _ = svd(RRdag, shape=[[0], [1]], k=min(*RRdag.shape), truncate_eps=truncate_eps)
-                if return_eigval:
-                    R2 = oe.contract("ia,a->ia", Eigvect2, xp.sqrt(Eigval2))
-                    return R2, Eigval2
-                else:
-                    return R2
-
-        else:
-            if return_eigval:
-                return None, None
-            else:
-                return None
-
     R1, Eigval1 = cal_R(truncate_eps, qr='qr', return_eigval=True)
     R2, Eigval2 = cal_R(truncate_eps, qr='rq', return_eigval=True)
     gpu_syn(usegpu)
