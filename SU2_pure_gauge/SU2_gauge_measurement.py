@@ -88,11 +88,11 @@ class three_dims_su2puregauge_atrg(ATRG_3d):
                                           chunk = self.init_tensor_chunk, 
                                           legs_to_hosvd = [0])
         
-        chunk_Env = (2,2,2,2)
+        chunk_environment = (32,32,32,32,32)
         Tinit = su2puregauge.atrg_tensor(self.Dcut, 
                                          self.Dcut, 
                                          self.init_tensor_chunk, 
-                                         chunk_Env,
+                                         chunk_environment,
                                          legs_to_hosvd=[0],
                                          truncate_eps=1e-10,
                                          degeneracy_eps=0)

@@ -13,7 +13,7 @@ from itertools import product
 
 from mpi4py import MPI
 
-from tools.mpi_tools import contract_slice, pure_gauge_slice, gpu_syn, flatten_2dim_job_results
+from tools.mpi_tools import contract_slicer, pure_gauge_slice, gpu_syn, flatten_2dim_job_results
 from tools.linalg_tools import eigh, svd
 
 class SU2_pure_gauge:
@@ -197,37 +197,42 @@ class SU2_pure_gauge:
                     chi_plaquette:int, 
                     chi_atrgtensor:int, 
                     chunk_plaquette:tuple, 
-                    chunk_env:tuple, 
+                    chunk_environment:tuple,
                     legs_to_hosvd:list, 
                     truncate_eps:float, 
                     degeneracy_eps:float):
         
+        if self.use_gpu:
+            xp = cp
+        else:
+            xp = np
+
+        WORLD_MPI_COMM = self.comm
 
         P = self.plaquette_tensor(chi_plaquette, chunk_plaquette, legs_to_hosvd)
-        Env_Tl, Env_Tr = env_tensor_3d_SU2_pure_gauge(P, "T", chunk_env, 
-                                                          self.comm, self.use_gpu, 
-                                                          low_communication_cost=True, verbose=True)
-        PTl, PTr = squeezer_3d_SU2_pure_gauge_initial_tensor(chi_atrgtensor, Env_Tl, Env_Tr, 
-                                                                 truncate_eps, degeneracy_eps, 
-                                                                 self.comm, self.use_gpu)
-        del Env_Tl, Env_Tr
+        Q = None
+        if WORLD_MPI_COMM.Get_rank() == 0:
+            I = xp.diag(xp.ones(shape=chi_plaquette, dtype=P.dtype))
+            Q = oe.contract("Ωi,Ωj,Ωk,Ωl->ijkl", I, I, I, I)
+            del I
+        gpu_syn(self.use_gpu)
+        WORLD_MPI_COMM.barrier()
+
+        A, B, C, D = env_tensor_legswapping_3d_gauge(P, Q, 
+                                                     chi_plaquette, 
+                                                     truncate_eps, 
+                                                     degeneracy_eps, 
+                                                     self.comm, 
+                                                     self.use_gpu)
+        env_tensor_3d_gauge_left(chi_plaquette, 
+                                 A, B, C, D, P, Q,
+                                 "T",
+                                 truncate_eps,
+                                 degeneracy_eps,
+                                 chunk_environment,
+                                 self.comm,
+                                 self.use_gpu)
         
-        Env_Xl, Env_Xr = env_tensor_3d_SU2_pure_gauge(P, "X", chunk_env, 
-                                                          self.comm, self.use_gpu, 
-                                                          low_communication_cost=True, verbose=True)
-        PXl, PXr = squeezer_3d_SU2_pure_gauge_initial_tensor(chi_atrgtensor, Env_Xl, Env_Xr, 
-                                                                 truncate_eps, degeneracy_eps, 
-                                                                 self.comm, self.use_gpu)
-        del Env_Xl, Env_Xr
-
-        Env_Yl, Env_Yr = env_tensor_3d_SU2_pure_gauge(P, "Y", chunk_env, 
-                                                          self.comm, self.use_gpu, 
-                                                          low_communication_cost=True, verbose=True)
-        PXl, PXr = squeezer_3d_SU2_pure_gauge_initial_tensor(chi_atrgtensor, Env_Yl, Env_Yr, 
-                                                                 truncate_eps, degeneracy_eps, 
-                                                                 self.comm, self.use_gpu)
-        del Env_Yl, Env_Yr
-
 
 
 
@@ -336,7 +341,7 @@ def env_tensor_legswapping_3d_gauge(P, Q, chi, truncate_eps:float, degeneracy_ep
     _Qaxes_list = [(3, 0, 1, 2), (0, 1, 2, 3)]
     _Paxes_list = [(0, 1, 2, 3), (1, 2, 3, 0)]
     Njobs = 2
-    results = []
+    results = None
     for job_id in range(Njobs):
         dest_rank = job_id % MPI_SIZE
 
@@ -350,41 +355,53 @@ def env_tensor_legswapping_3d_gauge(P, Q, chi, truncate_eps:float, degeneracy_ep
         else:
             if MPI_RANK == dest_rank:
                 job = comm.recv(source=0, tag=MPI_RANK)
+            else:
+                pass
 
         if MPI_RANK == dest_rank:
             Q, _Qaxes, P, _Paxes = job
             _Q = xp.transpose(Q, _Qaxes)
             _P = xp.transpose(P, _Paxes)
 
+    for job_id in range(Njobs):
+        dest_rank = job_id % MPI_SIZE
+
+        if MPI_RANK == dest_rank:
             if job_id == 0:
                 #Q_{u1, x12, t'12, l2} = usQ_{u1, x12, i}, svhQ_{i, t'12, l2}
                 #P_{l1, u1, r1, d1} = usP_{l1, u1, j}, svhP_{j, r1, d1}
                 us_Q, svh_Q, _ = svd(_Q, shape=[[0,1], [2,3]], k=chi, truncate_eps=truncate_eps, degeneracy_eps=degeneracy_eps, split=True)
-                us_P, svh_P, _ = svd(_P, shape=[[0,1], [2,3]], k=chi, truncate_eps=truncate_eps, degeneracy_eps=degeneracy_eps, split=True)
+                us_P, svh_P, sP = svd(_P, shape=[[0,1], [2,3]], k=chi, truncate_eps=truncate_eps, degeneracy_eps=degeneracy_eps, split=True)
                 #M_{x12, i, l1, j} = usQ_{x12, u1, i} usP_{l1, u1, j} = M_{i, l1, j, x12}
                 M = oe.contract("xui,luj->iljx", us_Q, us_P)
                 #M_{i, l1, j, x12} = usM_{i, l1, k} svhM_{k, j, x12}
-                usM, svhM, _ = svd(M, shape=[[0,1], [2,3]], k=chi, truncate_eps=truncate_eps, degeneracy_eps=degeneracy_eps, split=True)
+                usM, svhM, sM = svd(M, shape=[[0,1], [2,3]], k=chi, truncate_eps=truncate_eps, degeneracy_eps=degeneracy_eps, split=True)
                 #A_{t'12, l2, l1, k} = svhQ_{i, t'12, l2} usM_{i, l1, k}
                 A = oe.contract("itL,ilk->tLlk", svh_Q, usM)
                 #B_{k, d1, x12, r1} = svhM_{k, j, x12} svhP_{j, r1, d1}
                 B = oe.contract("kjx,jrd->kdxr", svhM, svh_P)
-                results.append([A, B])
+                results = [A, B]
+
+                #print(f"sP{job_id}:", sP/xp.max(sP))
+                #print(f"sM{job_id}:", sM/xp.max(sM))
 
             elif job_id == 1:
                 #Q_{y20, u0, d2, t'20} = usQ_{y20, u0, i}, svhQ_{i, d2, t'20}
                 #P_{u0, r0, d0, l0} = usP_{u0, r0, j}, svhP_{j, d0, l0}
                 us_Q, svh_Q, _ = svd(_Q, shape=[[0,1], [2,3]], k=chi, truncate_eps=truncate_eps, degeneracy_eps=degeneracy_eps, split=True)
-                us_P, svh_P, _ = svd(_P, shape=[[0,1], [2,3]], k=chi, truncate_eps=truncate_eps, degeneracy_eps=degeneracy_eps, split=True)
+                us_P, svh_P, sP = svd(_P, shape=[[0,1], [2,3]], k=chi, truncate_eps=truncate_eps, degeneracy_eps=degeneracy_eps, split=True)
                 #M_{i, r0, j, y20} = usQ_{y20, u0, i} usP_{u0, r0, j} = M_{i, r0, j, y20}
                 M = oe.contract("yui,urj->irjy", us_Q, us_P)
                 #M_{i, r0, j, y20} = usM_{i, r0, k} svhM_{k, j, y20}
-                usM, svhM, _ = svd(M, shape=[[0,1], [2,3]], k=chi, truncate_eps=truncate_eps, degeneracy_eps=degeneracy_eps, split=True)
+                usM, svhM, sM = svd(M, shape=[[0,1], [2,3]], k=chi, truncate_eps=truncate_eps, degeneracy_eps=degeneracy_eps, split=True)
                 #C_{k, l0, d0, y20} = svh_P_{d0, l0, j} svhM_{k, y20, j}
                 C = oe.contract("kjy,jdl->kdly", svhM, svh_P)
                 #D_{t'20, d2, r0, k} = svhQ_{i, d2, t'20} usM_{i, r0, k}
                 D = oe.contract("idt,irk->tdrk", svh_Q, usM)
-                results.append([C, D])
+                results = [C, D]
+
+                #print(f"sP{job_id}:", sP/xp.max(sP))
+                #print(f"sM{job_id}:", sM/xp.max(sM))
 
     results = comm.gather(sendobj=results, root=0)
     if MPI_RANK == 0:
@@ -393,17 +410,19 @@ def env_tensor_legswapping_3d_gauge(P, Q, chi, truncate_eps:float, degeneracy_ep
             for result in results[job_id]:
                 results_1dim.append(result)
     else:
-        results_1dim = None
+        results_1dim = [None, None, None, None]
     del results
+
+    return results_1dim
 
 
 def env_tensor_3d_gauge_left(chi, A, B, C, D, P, Q, 
                              direction:str, 
                              truncate_eps:float, 
                              degeneracy_eps:float,
+                             Env_chunks:tuple,
                              comm:MPI.Intercomm, 
-                             use_gpu=False, 
-                             verbose=False):
+                             use_gpu=False):
     if use_gpu:
         xp = cp
     else:
@@ -413,27 +432,27 @@ def env_tensor_3d_gauge_left(chi, A, B, C, D, P, Q,
     MPI_SIZE = comm.Get_size()
 
     if MPI_RANK == 0:
-        Env_part1 = oe.contract("icda,jcdA,eabf,eABf,kgbh,lgBh->ijkl", B, xp.conj(B), Q, Q, C, xp.conj(C))
+        #Part(1)_{aAbB} = B_{a, d1, x12, r1}  Q_{x01, r1, l0, y01} C_{b, l0, y20, d0}
+        #                B†_{A, d1, x12, R1} Q_{x01, R1, L0, y01} C†_{B, L0, y20, d0}
+        part1 = oe.contract("icda,jcdA,eabf,eABf,kgbh,lgBh->ijkl", B, xp.conj(B), Q, Q, C, xp.conj(C))
     else:
-        Env_part1 = None
+        part1 = None
 
-    
     if direction == "T" or direction == "t":
         if MPI_RANK == 0:
-            Env_part1 = xp.reshape(Env_part1, (chi*chi, chi*chi))
-
-            Env_part2 = oe.contract("lurd,LurD->lLdD", P, xp.conj(P))
-            Env_part2 = xp.reshape(Env_part2, (chi*chi, chi*chi))
+            #Part(2)_{l2, L2, d2, D2} = P_{l2, u2, r2, d2} P†_{L2, u2, r2, D2} 
+            part2 = oe.contract("lurd,LurD->lLdD", P, xp.conj(P))
         else:
-            Env_part2 = None
+            part2 = None
 
         Njobs = 2
         results = []
+        parts = [part1, part2]
         for job_id in range(Njobs):
             dest_rank = job_id % MPI_SIZE
 
             if MPI_RANK == 0:
-                sendjob = Env_part2
+                sendjob = parts[job_id]
 
                 if MPI_RANK == dest_rank:
                     job = sendjob
@@ -443,67 +462,133 @@ def env_tensor_3d_gauge_left(chi, A, B, C, D, P, Q,
             else:
                 if MPI_RANK == dest_rank:
                     job = comm.recv(source=0, tag=MPI_RANK)
-
+        
+        for job_id in range(Njobs):
+            dest_rank = job_id % MPI_SIZE
             if MPI_RANK == dest_rank:
-                Env = job
-                us, svh, _ = svd(Env, shape=chi, truncate_eps=truncate_eps, degeneracy_eps=degeneracy_eps, split=True)
+                us, svh, s = svd(job, shape=[[0,1], [2,3]], k=chi, truncate_eps=truncate_eps, degeneracy_eps=degeneracy_eps, split=True)
+                us  = xp.reshape(us , (chi, chi, us.shape[2]))
+                svh = xp.reshape(svh, (svh.shape[0], chi, chi))
                 results.append([us, svh])
+                #print(f"singular values of part{job_id} are ", s/xp.max(s))
         gpu_syn(use_gpu)
         comm.barrier()
 
         results = comm.gather(results, root=0)
-        Envs = flatten_2dim_job_results(results, job_size=Njobs, comm=comm)
-        del results, Env_part1, Env_part2
+        if MPI_RANK == 0:
+            Envs = flatten_2dim_job_results(results, job_size=Njobs, comm=comm)
+        else:
+            Envs = [None, None]
+        del results, part1, part2
         gpu_syn(use_gpu)
         comm.barrier()
 
-        Njobs = 2
+        slicing = contract_slicer(shape=(chi, chi, chi, chi, chi), 
+                                  chunk=Env_chunks, 
+                                  comm=comm)
+        ops = None
         if MPI_RANK == 0:
             us1, svh1 = Envs[0]
             us2, svh2 = Envs[1]
-            subs   = ["tlba,TlBA,aAi,bBj->tTij", "tbra,TBrA,iaA,jbB->tTij"]
-            ops    = [[A, xp.conj(A), us1, us2], [D, xp.conj(D), svh1, svh2]]
-            pathes = [[(0,1,2), (0,1)], [(0,1,2), (0,1)]]
-        else:
-            us1, svh1 = None, None
-            us2, svh2 = None, None
-            subs   = None
-            ops    = None
-            pathes = None
+            ops  = [A, us1, us2, D, svh1, svh2]
+        ops = comm.bcast(ops, root=0)
+        A, us1, us2, D, svh1, svh2 = ops
+        _, _, chii = us1.shape
+        _, _, chij = us2.shape
+        subs = ["tlba,TlBA,aAi,bBj->tTij", "tbra,TBrA,iaA,jbB->tTij"]
 
+        for n, (a, aa, b, bb, l) in enumerate(slicing):
+            if n == 0:
+                path, _ = oe.contract_path(subs[0], A[:,l,b,a], xp.conj(A)[:,l,bb,aa], us1[a,aa,:], us2[b,bb,:])
+                break
+        
+        Env1 = xp.zeros(shape=(chi, chi, chii, chij), dtype=A.dtype)
+        t0 = time.time()
+        for n, (a, aa, b, bb, l) in enumerate(slicing):
+            if n % MPI_SIZE == MPI_RANK:
+                Env1 += oe.contract(subs[0], 
+                                    A[:,l,b,a], xp.conj(A)[:,l,bb,aa], 
+                                    us1[a,aa,:], us2[b,bb,:], optimize=path)
+            if n % 4 == 4 - 1 and MPI_RANK == 0:
+                t1 = time.time()
+                print(f"Global iters {n+1}, local iters {n//MPI_SIZE+1}, time= {t1-t0:.2e} s")
+                t0 = time.time()
+        Env1 = comm.reduce(Env1, op=MPI.SUM, root=0)
+        gpu_syn(use_gpu)
+        comm.barrier()
+
+
+        slicing = contract_slicer(shape=(chi, chi, chi, chi, chi), 
+                                  chunk=Env_chunks, 
+                                  comm=comm)
+        for n, (a, aa, b, bb, r) in enumerate(slicing):
+            if n == 0:
+                path, _ = oe.contract_path(subs[1], D[:,b,r,a], xp.conj(D)[:,bb,r,aa], svh1[:,a,aa], svh2[:,b,bb])
+                break
+        Env2 = xp.zeros(shape=(chi, chi, chii, chij), dtype=A.dtype)
+        t0 = time.time()
+        for n, (a, aa, b, bb, r) in enumerate(slicing):
+            if n % MPI_SIZE == MPI_RANK:
+                Env2 += oe.contract(subs[1], 
+                                    D[:,b,r,a], xp.conj(D)[:,bb,r,aa], 
+                                    svh1[:,a,aa], svh2[:,b,bb], optimize=path)
+            if n % 4 == 4 - 1 and MPI_RANK == 0:
+                t1 = time.time()
+                print(f"Global iters {n+1}, local iters {n//MPI_SIZE+1}, time= {t1-t0:.2e} s")
+                t0 = time.time()
+        Env2 = comm.reduce(Env2, op=MPI.SUM, root=0)
+        gpu_syn(use_gpu)
+        comm.barrier()
+
+        if MPI_RANK == 0:
+            Env = oe.contract("ikab,jlab->ijkl", Env1, Env2)
+            mat = xp.reshape(Env, (chi*chi, chi*chi))
+            hermiterr = xp.linalg.norm(mat - xp.conj(mat.T))
+            print(f"hermit err={hermiterr}")
+        else:
+            Env = None
+
+    if direction == "X" or direction == "x":
+        if MPI_RANK == 0:
+            #Part(2)_{l2,L2,a,A} = A_{t'12, l1, l2, a} A†_{t'12, l1, L2, A}
+            part2 = oe.contract("tila,tiLA->lLaA", A, xp.conj(A))
+            Env12 = oe.contract("lLaA,aAbB->lLbB", part2, part1)
+            us, svh, _ = svd(Env12, shape=[[0,1], [2,3]])
+        else:
+            us, svh = None, None
+
+        subs = []
+        parts = [us, svh]
         results = []
+        Njobs = 2
         for job_id in range(Njobs):
             dest_rank = job_id % MPI_SIZE
 
             if MPI_RANK == 0:
-                sendjob = [subs[job_id], ops[job_id], pathes[job_id]]
+                sendjob = parts[job_id]
 
                 if MPI_RANK == dest_rank:
                     job = sendjob
                 else:
                     comm.send(sendjob, dest=dest_rank, tag=dest_rank)
-
+            
             else:
-                if MPI_RANK == dest_rank:
-                    job = comm.recv(soure=0, tag=MPI_RANK)
-
-            if MPI_RANK == dest_rank:
-                sub, op, path = job
+                job = comm.recv(source=0, tag=MPI_RANK)
+        
+        for job_id in range(Njobs):
+            dest_rank = job_id % MPI_SIZE
+            if MPI_RANK ==  dest_rank:
                 results.append(
-                    oe.contract(sub, op, optimize=path)
+                    #Env(1)_{}
+                    oe.contract("")
                 )
-        del Envs
-        gpu_syn(use_gpu)
-        comm.barrier()
 
-        results = comm.gather(results, root=0)
-        Envs = flatten_2dim_job_results(results, job_size=Njobs, comm=comm)
-        del results, us1, svh1, us2, svh2, subs, ops, pathes
+        
 
-        if MPI_RANK == 0:
-            Env = oe.contract("ikab,jlab->ijkl", *Envs)
-        else:
-            Env = None
+
+
+    import sys
+    sys.exit(0)
 
 
 def env_tensor_3d_SU2_pure_gauge(A, direction:str, chunk:tuple, comm:MPI.Intercomm, use_gpu=False, low_communication_cost=False, verbose=False):
