@@ -1,10 +1,10 @@
 #!/bin/bash
 
-np=4
+np=1
 
 Dcut=64
 K=6
-b=40.96
+b=2.0
 Lx=6
 Ly=6
 Lt=6
