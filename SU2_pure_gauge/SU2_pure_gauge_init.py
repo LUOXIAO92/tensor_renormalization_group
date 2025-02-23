@@ -384,29 +384,29 @@ class SU2_pure_gauge:
         
         results = []
         for Rl, Rr in localjobs:
-            Pl, Pr = su2_gauge_squeezer_3d(chi_atrgtensor, 
+            Vl, Vr = squeezer_3d_gauge(chi_atrgtensor, 
                                            Rl, Rr, 
                                            truncate_eps=truncate_eps, 
                                            degeneracy_eps=degeneracy_eps, 
                                            use_gpu=True, 
                                            verbose=verbose)
-            results.append([Pl, Pr])
+            results.append([Vl, Vr])
         results = MPI_COMM.gather(results, root=0)
         gpu_syn(self.use_gpu)
         MPI_COMM.barrier()
 
-        Ps = []
+        Vs = []
         if MPI_RANK == 0:
             results = flatten_2dim_job_results(results, job_size=len(Rs), comm=MPI_COMM)
-            for Pl, Pr in results:
+            for Vl, Vr in results:
                 #PrPl = oe.contract("iab,abj->ij", Pr, Pl)
                 #print(f"Tr(PrPl)={xp.trace(PrPl)}, |PrPl|^2={xp.linalg.norm(PrPl)**2}")
-                Ps.append(Pl)
-                Ps.append(Pr)
+                Vs.append(Vl)
+                Vs.append(Vr)
         del results
 
         if MPI_RANK == 0:
-            print(len(Ps)) 
+            print(len(Vs)) 
 
 
         import sys
@@ -977,12 +977,12 @@ def env_tensor_3d_gauge(chi, A, B, C, D, P, Q,
 
     
 
-def su2_gauge_squeezer_3d(Dcut, 
-                          Rl, Rr, 
-                          truncate_eps, 
-                          degeneracy_eps, 
-                          use_gpu=False, 
-                          verbose=False):
+def squeezer_3d_gauge(Dcut, 
+                      Rl, Rr, 
+                      truncate_eps, 
+                      degeneracy_eps, 
+                      use_gpu=False, 
+                      verbose=False):
     if use_gpu:
         xp = cp
     else:
@@ -1007,6 +1007,63 @@ def su2_gauge_squeezer_3d(Dcut,
     Pr = oe.contract("i,ij,jab->iab", xp.sqrt(Sinv), UH, Rl)
 
     return Pl, Pr
+
+
+def rsvd_3d_gauge(chi_atrgtensor, 
+                  A, B, C, D, P, Q, Vs, 
+                  k:int, p:int, q:int, 
+                  chunk:tuple, 
+                  comm:MPI.Intercomm, 
+                  seed=None, 
+                  use_gpu=False, 
+                  verbose=False):
+    if use_gpu:
+        xp = cp
+    else:
+        xp = np
+
+    MPI_RANK = comm.Get_rank()
+    MPI_SIZE = comm.Get_size()
+
+    _Vs = comm.bcast(Vs, root=0)
+    VT, Vt, VX, Vx, VY, Vy = _Vs
+    del _Vs
+
+    chia, chib = A.shape[3], D.shape[3]
+    chiT, chiX, chiY = VT.shape[2], VX.shape[2], VY.shape[2]
+    chit, chix, chiy = Vt.shape[0], Vx.shape[0], Vy.shape[0]
+    chil = k + p
+
+    shape = (chia, chib)
+    slices = contract_slicer(shape, chunk, comm)
+    slices = list(slices)
+
+    Y = None
+    if MPI_RANK == 0:
+        rs = xp.random.RandomState(None)
+        Y  = rs.standard_normal(size=(chit, chix, chiy, chil), dtype=A.dtype)
+    Y = comm.bcast(Y, root=0)
+    A = comm.bcast(A, root=0)
+    B = comm.bcast(B, root=0)
+    C = comm.bcast(C, root=0)
+    D = comm.bcast(D, root=0)
+    P = comm.bcast(C, root=0)
+    Q = comm.bcast(D, root=0)
+
+    for n, (lega, legb) in enumerate(slices):
+        if n == 0:
+            pathI  , _ = oe.contract_path("acdi,dCbe,AeBjaAT,bBX,cCY->TXYij", A[:,:,:,lega], P, D[:,:,:,legb], VT, VX, VY)
+            pathII , _ = oe.contract_path("")
+
+    TY = xp.zeros(shape=(chiT, chiX, chiY, chil), dtype=A.dtype)
+    for n, (lega, legb) in enumerate(slices):
+        if n % MPI_SIZE == MPI_RANK:
+            I = oe.contract("acdi,dCbe,AeBjaAT,bBX,cCY->TXYij", A[:,:,:,lega], P, D[:,:,:,legb], VT, VX, VY)
+            TY += oe.contract("")
+
+
+
+    return 0
 
 
 
