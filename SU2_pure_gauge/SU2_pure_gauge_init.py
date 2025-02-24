@@ -1053,7 +1053,7 @@ def rsvd_3d_gauge(chi_atrgtensor,
     for n, (lega, legb) in enumerate(slices):
         if n == 0:
             pathI  , _ = oe.contract_path("acdi,dCbe,AeBjaAT,bBX,cCY->TXYij", A[:,:,:,lega], P, D[:,:,:,legb], VT, VX, VY)
-            pathII , _ = oe.contract_path("")
+            pathII , _ = oe.contract_path("a")
 
     TY = xp.zeros(shape=(chiT, chiX, chiY, chil), dtype=A.dtype)
     for n, (lega, legb) in enumerate(slices):
