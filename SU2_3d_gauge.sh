@@ -1,6 +1,6 @@
 #!/bin/bash
 
-np=1
+np=2
 
 Dcut=64
 K=6
